@@ -1,6 +1,3 @@
-CC=gcc
-INCLUDES=
-CFLAGS=-Wall -c
 MAKE=make
 
 TOPTARGETS := all clean obj

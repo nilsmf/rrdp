@@ -1,9 +1,13 @@
+CC=gcc
+INCLUDES=-I /usr/local/opt/curl/include
+LINKS=-L /usr/local/opt/curl/lib
+CFLAGS=-Wall -c
 
 obj: rrpd.c
-	${CC} ${CFLAGS} $^
+	${CC} ${INCLUDES} ${CFLAGS} $^
 
 all: rrpd.o
-	${CC} -o rrpd $^
+	${CC} ${INCLUDES} -o rrpd $^
 
 clean:
 	rm -rf *.o
