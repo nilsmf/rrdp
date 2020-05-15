@@ -7,8 +7,7 @@
 #include <err.h>
 
 #include <curl/curl.h>
-#include <libxml/xmlreader.h>
-#include <libxml/parser.h>
+#include <expat.h>
 
 // libxm (l?)
 // ftp/curl
@@ -80,62 +79,75 @@ void fetch_snapshots(FILE* snapshot_file_input) {
 	}
 }
 
-static void print_element_names(xmlNode * a_node)
-{
-	xmlNode *cur_node = NULL;
+typedef enum snapshot_scope {
+	SNAPSHOT_SCOPE_NONE,
+	SNAPSHOT_SCOPE_SNAPSHOT,
+	SNAPSHOT_SCOPE_PUBLISH
+} SNAPSHOT_SCOPE;
 
-	for (cur_node = a_node; cur_node; cur_node = cur_node->next) {
-		if (cur_node->type == XML_ELEMENT_NODE) {
-			printf("node type: Element, name: %s\n", cur_node->name);
+typedef struct snapshotXML {
+	SNAPSHOT_SCOPE scope;
+
+} SNAPSHOT_XML;
+
+void snapshot_elem_start(void *data, const char *el, const char **attr) {
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
+	if (!strcmp("snapshot", el)) {
+		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
+			err(1, "parse failed");
 		}
-
-		print_element_names(cur_node->children);
+		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
+		printf("start %s\n", el);
+	}
+	else if (!strcmp("publish", el)) {
+		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
+			err(1, "parse failed");
+		}
+		snapshot_xml->scope = SNAPSHOT_SCOPE_PUBLISH;
+		printf("start %s\n", el);
+	} else {
+		err(1, "parse failed");
 	}
 }
 
-void publish_node(xmlDoc *doc, xmlNode *publish_node) {
-	xmlElemDump(stdout, doc, publish_node);
+void snapshot_elem_end(void *data, const char *el) {
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
+	if (!strcmp("snapshot", el)) {
+		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
+			err(1, "parse failed");
+		}
+		snapshot_xml->scope = SNAPSHOT_SCOPE_NONE;
+		printf("end %s\n", el);
+	}
+	else if (!strcmp("publish", el)) {
+		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH) {
+			err(1, "parse failed");
+		}
+		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
+		printf("end %s\n", el);
+	} else {
+		err(1, "parse failed");
+	}
 }
 
-void process_snapshots(int snapshot_fd) {
-	xmlValidCtxtPtr ctxt = NULL;
-	xmlDoc *doc = NULL;
-	xmlNode *root_element = NULL;
-
-	ctxt = xmlNewParserCtxt();
-	if (!ctxt) {
-		fprintf(stderr, "xml ctxt allocation failed");
-		return;
-	}
-
-	ctxt->userData = stdout; 
-	ctxt->error    = (xmlValidityErrorFunc) fprintf;   /* register error function */ 
-	ctxt->warning  = (xmlValidityWarningFunc) fprintf; /* register warning function */ 
-
-	doc = xmlCtxtReadFd(ctxt, snapshot_fd, "", NULL, 0);
-	if (!doc) {
-		fprintf(stderr, "parse failed");
-		xmlFreeParserCtxt(ctxt);
-		return;
-	}
-	if (ctxt->valid != 0) {
-		fprintf(stderr, "not valid");
-		xmlFreeDoc(doc);
-		xmlFreeParserCtxt(ctxt);
-		return;
-	}
-
-
-	root_element = xmlDocGetRootElement(doc);
-	for (xmlNode *cur_node = root_element; cur_node; cur_node = cur_node->next) {
-		printf("reading node");
-		if (cur_node->type == XML_ELEMENT_NODE && !strcmp(cur_node->name, "publish")) {
-			publish_node(doc, cur_node);
+void process_snapshots(FILE* snapshot_file_out) {
+	int BUFF_SIZE = 200;
+	char read_buffer[BUFF_SIZE];
+	SNAPSHOT_XML *snapshot_xml = malloc(sizeof(SNAPSHOT_XML));
+	XML_Parser p = XML_ParserCreate(NULL);
+	XML_SetElementHandler(p, snapshot_elem_start, snapshot_elem_end);
+	XML_SetUserData(p, (void*)snapshot_xml);
+	//printf("reading\n");
+	while (fgets(read_buffer, BUFF_SIZE, snapshot_file_out)) {
+		//printf("%ld chars read:\n", strlen(read_buffer));
+		//printf("%.200s", read_buffer);
+		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
+			fprintf(stderr, "Parse error at line %lu:\n%s\n",
+				XML_GetCurrentLineNumber(p),
+				XML_ErrorString(XML_GetErrorCode(p)));
 		}
 	}
-
-	xmlFreeDoc(doc);
-	xmlFreeParserCtxt(ctxt);
+	XML_Parse(p, "", 0, 1);
 }
 
 int main(int argc, char** argv) {
@@ -143,6 +155,7 @@ int main(int argc, char** argv) {
 	opts *options;
 	int snapshot_file_pipe[2];
 	FILE *snapshot_file_in;
+	FILE *snapshot_file_out;
 	
 	options = getopts(argc, argv);
 	if( pipe(snapshot_file_pipe) != 0)
@@ -164,7 +177,9 @@ int main(int argc, char** argv) {
 		err(1, "fork");
 	/* snapshot processor */
 	if (pid == 0) {
-		process_snapshots(snapshot_file_pipe[0]);
+		snapshot_file_out = fdopen(snapshot_file_pipe[0], "r");
+		process_snapshots(snapshot_file_out);
+		close(snapshot_file_pipe[0]);
 	}
 
 	cleanopts(options);
