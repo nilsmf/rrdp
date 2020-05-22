@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <expat.h>
 
+#include <src/util.h>
 // libxm (l?)
 // ftp/curl
 // 
@@ -116,28 +117,28 @@ void print_snapshot_xml(SNAPSHOT_XML* snapshot_xml) {
 void snapshot_elem_start(void *data, const char *el, const char **attr) {
 	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
 	// Can only enter here once as we should have no ways to get back to NONE scope
-	if (!strcmp("snapshot", el)) {
+	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
-			err(1, "parse failed");
+			err(1, "parse failed - entered snapshot elem unexpectedely");
 		}
 		for (int i = 0; attr[i]; i += 2) {
-			if (!strcmp("xmlns", attr[i])) {
+			if (strcmp("xmlns", attr[i]) == 0) {
 				snapshot_xml->xmlns = strdup(attr[i+1]);
-			} else if (!strcmp("version", attr[i])) {
+			} else if (strcmp("version", attr[i]) == 0) {
 				snapshot_xml->version = strdup(attr[i+1]);
-			} else if (!strcmp("session_id", attr[i])) {
+			} else if (strcmp("session_id", attr[i]) == 0) {
 				snapshot_xml->session_id = strdup(attr[i+1]);
-			} else if (!strcmp("serial", attr[i])) {
+			} else if (strcmp("serial", attr[i]) == 0) {
 				snapshot_xml->serial = strdup(attr[i+1]);
 			} else {
-				err(1, "parse failed");
+				err(1, "parse failed - non conforming attribute found in publish elem");
 			}
 		}
 		if (!(snapshot_xml->xmlns &&
 		      snapshot_xml->version &&
 		      snapshot_xml->session_id &&
 		      snapshot_xml->serial)) {
-			err(1, "parse failed");
+			err(1, "parse failed - incomplete snapshot attributes");
 		}
 
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
@@ -145,40 +146,46 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 		print_snapshot_xml(snapshot_xml);
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
-	} else if (!strcmp("publish", el)) {
+	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
-			err(1, "parse failed");
+			err(1, "parse failed - entered publish elem unexpectedely");
 		}
 		for (int i = 0; attr[i]; i += 2) {
-			if (!strcmp("uri", attr[i])) {
+			if (strcmp("uri", attr[i]) == 0) {
 				snapshot_xml->publish_uri = strdup(attr[i+1]);
 			} else {
-				err(1, "parse failed");
+				err(1, "parse failed - non conforming attribute found in publish elem");
 			}
+		}
+		if (!snapshot_xml->publish_uri) {
+			err(1, "parse failed - incomplete publish attributes");
 		}
 		snapshot_xml->scope = SNAPSHOT_SCOPE_PUBLISH;
 		printf("start %s\n", el);
 	} else {
-		err(1, "parse failed");
+		err(1, "parse failed - unexpected elem exit found");
 	}
 }
 
 void snapshot_elem_end(void *data, const char *el) {
 	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
-	if (!strcmp("snapshot", el)) {
+	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
-			err(1, "parse failed");
+			err(1, "parse failed - exited snapshot elem unexpectedely");
 		}
 		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
 		print_snapshot_xml(snapshot_xml);
 		printf("end %s\n", el);
 	}
-	else if (!strcmp("publish", el)) {
+	else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH) {
-			err(1, "parse failed");
+			err(1, "parse failed - exited publish elem unexpectedely");
+		}
+		if (!snapshot_xml->publish_uri) {
+			err(1, "parse failed - no data recovered from publish elem");
 		}
 		//TODO write this data somewhere (and/or never keep this much and stream it straight to staging file?)
-		printf("publish: '%.*s'\n", snapshot_xml->publish_data ? snapshot_xml->publish_data_length : 5, snapshot_xml->publish_data ?: "NULL");
+		printf("publish: '%.*s'\n", snapshot_xml->publish_data ? snapshot_xml->publish_data_length : 4, snapshot_xml->publish_data ?: "NULL");
 		free(snapshot_xml->publish_uri);
 		snapshot_xml->publish_uri = NULL;
 		free(snapshot_xml->publish_data);
@@ -187,15 +194,19 @@ void snapshot_elem_end(void *data, const char *el) {
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
 		printf("end %s\n", el);
 	} else {
-		err(1, "parse failed");
+		err(1, "parse failed - unexpected elem exit found");
 	}
 }
 
-//TODO atm this often gets called with '\n' as the only data... seems wasteful
 void snapshot_content_handler(void *data, const char *content, int length)
 {
+	int new_length;
 	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
+		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
+		if (length == 1 && content[0] == '\n') {
+			return;
+		}
 		printf("parse chunk %d\n", length);
 		//append content to publish_data
 		if (snapshot_xml->publish_data) {
@@ -204,7 +215,11 @@ void snapshot_content_handler(void *data, const char *content, int length)
 		} else {
 			snapshot_xml->publish_data = strndup(content, length);
 		}
-		snapshot_xml->publish_data_length += length;
+		new_length = strip_non_b64(snapshot_xml->publish_data, snapshot_xml->publish_data_length + length, snapshot_xml->publish_data);
+		if (new_length == -1) {
+			err(1, "parse failed - b64 parse error");
+		}
+		snapshot_xml->publish_data_length = new_length;
 		//printf("publish_data running total (%d) '%.*s'\n", snapshot_xml->publish_data_length, snapshot_xml->publish_data_length, snapshot_xml->publish_data);
 	}
 	else {
@@ -228,6 +243,7 @@ void process_snapshots(FILE* snapshot_file_out) {
 			fprintf(stderr, "Parse error at line %lu:\n%s\n",
 				XML_GetCurrentLineNumber(p),
 				XML_ErrorString(XML_GetErrorCode(p)));
+			err(1, "parse failed - basic xml error");
 		}
 	}
 	XML_Parse(p, "", 0, 1);
