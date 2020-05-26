@@ -55,7 +55,7 @@ void fetch_snapshots(FILE* snapshot_file_input) {
 		printf("starting curl\n");
 		fflush(stdout);
 		CURLcode res;
-		curl_easy_setopt(curl, CURLOPT_URL, "https://ca.rg.net/rrdp/eaf7cb9c-717a-4c02-b683-4ee3820ab3d0/snapshot/5740.xml");
+		curl_easy_setopt(curl, CURLOPT_URL, "https://ca.rg.net/rrdp/eaf7cb9c-717a-4c02-b683-4ee3820ab3d0/snapshot/5753.xml");
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, snapshot_file_input);
 		res = curl_easy_perform(curl);
 		printf("curl response: %d\n", res);
@@ -81,7 +81,7 @@ void fetch_snapshots(FILE* snapshot_file_input) {
 }
 
 void fetch_snapshots_static(FILE* snapshot_file_input) {
-	FILE *snapshot_file_disk = fopen("regress/5740.xml", "r");
+	FILE *snapshot_file_disk = fopen("regress/5753.xml", "r");
 	if (snapshot_file_disk) {
 		char read_buffer[200];
 		//printf("reading\n");
@@ -112,12 +112,56 @@ typedef struct snapshotXML {
 
 } SNAPSHOT_XML;
 
-void print_snapshot_xml(SNAPSHOT_XML* snapshot_xml) {
+void print_snapshot_xml(SNAPSHOT_XML *snapshot_xml) {
 	printf("scope: %d\n", snapshot_xml->scope);
 	printf("xmlns: %s\n", snapshot_xml->xmlns ?: "NULL");
 	printf("version: %s\n", snapshot_xml->version ?: "NULL");
 	printf("session_id: %s\n", snapshot_xml->session_id ?: "NULL");
 	printf("serial: %s\n", snapshot_xml->serial ?: "NULL");
+}
+
+FILE *open_snapshot_file(const char *publish_uri) {
+	if (!publish_uri) {
+		err(1, "tried to write to defunct publish uri");
+	}
+	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
+	int BUFF_SIZE=4096;
+	char *base_local = "/tmp/rrdp/";
+	const char *path;
+	size_t pathsz;
+	const char *host;
+	size_t hostsz;
+	char *filename = malloc(sizeof(char)*(BUFF_SIZE*2 + strlen(base_local)));
+
+	if (rsync_uri_parse(&host, &hostsz,
+			    NULL, NULL,
+			    &path, &pathsz,
+			    NULL, publish_uri) == 0) {
+		fflush(stderr);
+		err(1, "parse publish uri elem fail");
+	}
+
+	sprintf(filename, "%s/%.*s/%.*s", base_local, (int)hostsz, host, (int)pathsz, path);
+
+	//create dir if necessary
+	char *path_delim = strrchr(filename, '/');
+	path_delim[0] = '\0';
+	mkpath(filename, 0777);
+	path_delim[0] = '/';
+	FILE * ret = fopen(filename, "w");
+	free(filename);
+	return ret;
+}
+
+int write_snapshot_publish(SNAPSHOT_XML *snapshot_xml) {
+	FILE *f;
+	if (!(f = open_snapshot_file(snapshot_xml->publish_uri))) {
+		err(1, "file open error");
+	}
+	//TODO decode b64 message
+	fprintf(f, "%.*s", snapshot_xml->publish_data_length,
+		snapshot_xml->publish_data);
+	return snapshot_xml->publish_data_length;
 }
 
 void snapshot_elem_start(void *data, const char *el, const char **attr) {
@@ -148,8 +192,6 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 		}
 
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
-		printf("start %s\n", el);
-		fflush(stdout);
 		print_snapshot_xml(snapshot_xml);
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
@@ -169,7 +211,6 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 			err(1, "parse failed - incomplete publish attributes");
 		}
 		snapshot_xml->scope = SNAPSHOT_SCOPE_PUBLISH;
-		printf("start %s\n", el);
 	} else {
 		err(1, "parse failed - unexpected elem exit found");
 	}
@@ -194,13 +235,13 @@ void snapshot_elem_end(void *data, const char *el) {
 		}
 		//TODO write this data somewhere (and/or never keep this much and stream it straight to staging file?)
 		//printf("publish: '%.*s'\n", snapshot_xml->publish_data ? snapshot_xml->publish_data_length : 4, snapshot_xml->publish_data ?: "NULL");
+		write_snapshot_publish(snapshot_xml);
 		free(snapshot_xml->publish_uri);
 		snapshot_xml->publish_uri = NULL;
 		free(snapshot_xml->publish_data);
 		snapshot_xml->publish_data = NULL;
 		snapshot_xml->publish_data_length = 0;
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
-		printf("end %s\n", el);
 	} else {
 		err(1, "parse failed - unexpected elem exit found");
 	}
@@ -276,9 +317,9 @@ int main(int argc, char** argv) {
 	if (pid == 0) {
 		close(snapshot_file_pipe[0]);
 		snapshot_file_in = fdopen(snapshot_file_pipe[1], "w");
-		fetch_snapshots(snapshot_file_in);
-		//fetch_snapshots_static(snapshot_file_in);
-		close(snapshot_file_pipe[1]);
+		//fetch_snapshots(snapshot_file_in);
+		fetch_snapshots_static(snapshot_file_in);
+		//close(snapshot_file_pipe[1]);
 		exit(0);
 	}
 	close(snapshot_file_pipe[1]);
