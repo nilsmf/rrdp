@@ -1,59 +1,13 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include <unistd.h>
 #include <err.h>
 
-#include <curl/curl.h>
 #include <expat.h>
 
 #include <src/util.h>
-
-void fetch_snapshots(FILE* snapshot_file_input) {
-	//CURL fetch
-	CURL *curl = curl_easy_init();
-	int res = -1;
-	if(curl) {
-		printf("starting curl\n");
-		fflush(stdout);
-		CURLcode res;
-		curl_easy_setopt(curl, CURLOPT_URL, "https://ca.rg.net/rrdp/eaf7cb9c-717a-4c02-b683-4ee3820ab3d0/snapshot/5753.xml");
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, snapshot_file_input);
-		res = curl_easy_perform(curl);
-		printf("curl response: %d\n", res);
-		fflush(stdout);
-		curl_easy_cleanup(curl);
-	} else {
-		err(1, "curl init failure");
-	}
-	printf("bye world %d\n", res);
-	fflush(stdout);
-
-	//printf("writing to pipe\n");
-	
-
-	//STATIC
-	/*
-	char str[] = "hello world 1234 1234 1234\n";
-	for (int i=0; i<5; i++) {
-		//write(snapshot_file_input, str, strlen(str) + 1);
-		fprintf(snapshot_file_input, "%d - %s", i, str);
-		fflush(snapshot_file_input);
-	}*/
-}
-
-void fetch_snapshots_static(FILE* snapshot_file_input) {
-	FILE *snapshot_file_disk = fopen("regress/5753.xml", "r");
-	if (snapshot_file_disk) {
-		char read_buffer[200];
-		//printf("reading\n");
-		while (fgets(read_buffer, 200, snapshot_file_disk)) {
-			//printf("%ld chars read:\n", strlen(read_buffer));
-			fprintf(snapshot_file_input, "%.200s", read_buffer);
-			fflush(snapshot_file_input);
-		}
-	}
-}
 
 typedef enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
@@ -143,7 +97,7 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 			} else if (strcmp("serial", attr[i]) == 0) {
 				snapshot_xml->serial = strdup(attr[i+1]);
 			} else {
-				err(1, "parse failed - non conforming attribute found in publish elem");
+				err(1, "parse failed - non conforming attribute found in snapshot elem");
 			}
 		}
 		if (!(snapshot_xml->xmlns &&

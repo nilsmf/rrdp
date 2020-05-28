@@ -1,4 +1,4 @@
 *.o
-rrpd
+rrdp
 test
 *.swp

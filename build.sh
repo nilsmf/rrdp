@@ -15,6 +15,6 @@ CFLAGS+=" -c"
 
 set -o xtrace
 
-${CC} ${CFLAGS} ${INCLUDES} src/rrpd.c src/snapshot.c src/util.c
-${CC} ${LINKS} ${LINKS2} rrpd.o util.o snapshot.o -o rrpd
+${CC} ${CFLAGS} ${INCLUDES} src/main.c src/snapshot.c src/notification.c src/util.c src/fetch_util.c
+${CC} ${LINKS} ${LINKS2} main.o snapshot.o notification.o util.o fetch_util.o -o rrdp
 
