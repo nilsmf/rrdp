@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdio.h>
 #include <assert.h>
 #include <err.h>
 #include <errno.h>
@@ -50,6 +51,16 @@ int mkpath(char *dir, mode_t mode)
 	free(newdir);
 	return ret;
 }
+
+//TODO stolen from rpki atm
+enum rtype {
+	RTYPE_EOF = 0,
+	RTYPE_TAL,
+	RTYPE_MFT,
+	RTYPE_ROA,
+	RTYPE_CER,
+	RTYPE_CRL
+};
 
 //TODO stolen from rpki atm
 int rsync_uri_parse(const char **hostp, size_t *hostsz,
@@ -150,4 +161,25 @@ int rsync_uri_parse(const char **hostp, size_t *hostsz,
 
 	return 1;
 }
+char *generate_filename_from_uri(const char *uri, const char *base_path) {
+	if (!uri || !base_path) {
+		err(1, "tried to write to defunct publish uri");
+	}
+	int BUFF_SIZE=4096;
+	const char *path;
+	size_t pathsz;
+	const char *host;
+	size_t hostsz;
+	char *filename = malloc(sizeof(char)*(BUFF_SIZE*2 + strlen(base_path)));
 
+	if (rsync_uri_parse(&host, &hostsz,
+			    NULL, NULL,
+			    &path, &pathsz,
+			    NULL, uri) == 0) {
+		err(1, "parse uri elem fail");
+	}
+
+	sprintf(filename, "%s/%.*s/%.*s", base_path, (int)hostsz, host, (int)pathsz, path);
+
+	return filename;
+}

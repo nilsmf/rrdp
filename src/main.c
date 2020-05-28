@@ -2,9 +2,10 @@
 #include <unistd.h>
 #include <err.h>
 
-#include <src/snapshot.h>
 #include <src/fetch_util.h>
 #include <src/notification.h>
+#include <src/snapshot.h>
+#include <src/delta.h>
 
 // libxm (l?)
 // ftp/curl
@@ -62,7 +63,9 @@ int main(int argc, char** argv) {
 		close(snapshot_file_pipe[0]);
 		snapshot_file_in = fdopen(snapshot_file_pipe[1], "w");
 		//fetch_url("https://ca.rg.net/rrdp/eaf7cb9c-717a-4c02-b683-4ee3820ab3d0/snapshot/5753.xml", snapshot_file_in);
-		fetch_file("regress/notify.xml", snapshot_file_in);
+		//fetch_file("regress/snapshot.xml", snapshot_file_in);
+		//fetch_file("regress/notify.xml", snapshot_file_in);
+		fetch_file("regress/5738.xml", snapshot_file_in);
 		//close(snapshot_file_pipe[1]);
 		exit(0);
 	}
@@ -73,8 +76,9 @@ int main(int argc, char** argv) {
 	/* snapshot processor */
 	//if (pid == 0) {
 		snapshot_file_out = fdopen(snapshot_file_pipe[0], "r");
-		//process_snapshots(snapshot_file_out);
-		process_notification(snapshot_file_out);
+		process_delta(snapshot_file_out);
+		//process_snapshot(snapshot_file_out);
+		//process_notification(snapshot_file_out);
 		close(snapshot_file_pipe[0]);
 	//}
 

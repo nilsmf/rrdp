@@ -41,23 +41,8 @@ FILE *open_snapshot_file(const char *publish_uri) {
 		err(1, "tried to write to defunct publish uri");
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
-	int BUFF_SIZE=4096;
 	char *base_local = "/tmp/rrdp/";
-	const char *path;
-	size_t pathsz;
-	const char *host;
-	size_t hostsz;
-	char *filename = malloc(sizeof(char)*(BUFF_SIZE*2 + strlen(base_local)));
-
-	if (rsync_uri_parse(&host, &hostsz,
-			    NULL, NULL,
-			    &path, &pathsz,
-			    NULL, publish_uri) == 0) {
-		fflush(stderr);
-		err(1, "parse publish uri elem fail");
-	}
-
-	sprintf(filename, "%s/%.*s/%.*s", base_local, (int)hostsz, host, (int)pathsz, path);
+	char *filename = generate_filename_from_uri(publish_uri, base_local);
 
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
@@ -192,7 +177,7 @@ void snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-void process_snapshots(FILE* snapshot_file_out) {
+void process_snapshot(FILE* snapshot_file_out) {
 	int BUFF_SIZE = 200;
 	char read_buffer[BUFF_SIZE];
 	SNAPSHOT_XML *snapshot_xml = calloc(1, sizeof(SNAPSHOT_XML));
