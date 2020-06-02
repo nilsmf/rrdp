@@ -5,13 +5,12 @@
 #define USER_AGENT "rrdp-client v0.1"
 
 void fetch_url(char *url, FILE* stream_in) {
-	int res = -1;
 	if (!url) {
 		err(1, "missing url");
 	}
 	CURL *curl = curl_easy_init();
 	if (curl) {
-		printf("starting curl\n");
+		printf("starting curl: %s\n", url);
 		fflush(stdout);
 		CURLcode res;
 		curl_easy_setopt(curl, CURLOPT_URL, url);

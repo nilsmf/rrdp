@@ -101,7 +101,7 @@ void delta_elem_start(void *data, const char *el, const char **attr) {
 		}
 
 		delta_xml->scope = DELTA_SCOPE_DELTA;
-		print_delta_xml(delta_xml);
+		//print_delta_xml(delta_xml);
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
 	} else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
@@ -134,8 +134,8 @@ void delta_elem_end(void *data, const char *el) {
 			err(1, "parse failed - exited delta elem unexpectedely");
 		}
 		delta_xml->scope = DELTA_SCOPE_END;
-		print_delta_xml(delta_xml);
-		printf("end %s\n", el);
+		//print_delta_xml(delta_xml);
+		//printf("end %s\n", el);
 	}
 	//TODO does this allow <publish></withdraw> or is that caught by basic xml parsing
 	else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
@@ -194,28 +194,46 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-void process_delta(FILE* delta_file_out) {
-	int BUFF_SIZE = 200;
-	char read_buffer[BUFF_SIZE];
-	DELTA_XML *delta_xml = calloc(1, sizeof(DELTA_XML));
+XML_Parser create_delta_parser(DELTA_XML **delta_xml) {
+	if (delta_xml) {
+		free(*delta_xml);
+	}
+	*delta_xml = calloc(1, sizeof(DELTA_XML));
 	XML_Parser p = XML_ParserCreate(NULL);
 
 	XML_SetElementHandler(p, delta_elem_start, delta_elem_end);
 	XML_SetCharacterDataHandler(p, delta_content_handler);
 	XML_SetUserData(p, (void*)delta_xml);
+	return p;
+}
+
+void process_delta(FILE* delta_file_out) {
+	int ret;
+	int BUFF_SIZE = 200;
+	char read_buffer[BUFF_SIZE];
+	DELTA_XML *delta_xml = NULL;
+	XML_Parser p = create_delta_parser(&delta_xml);
 	//printf("reading\n");
 	while (fgets(read_buffer, BUFF_SIZE, delta_file_out)) {
 		//printf("%ld chars read:\n", strlen(read_buffer));
 		//printf("%.200s\n", read_buffer);
 		fflush(stdout);
 		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-			fprintf(stderr, "Parse error at line %lu:\n%s\n",
+			if ((ret = XML_GetErrorCode(p)) == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
+				int junk_index = XML_GetCurrentByteIndex(p);
+				fprintf(stderr, "-------------------------------\nJunk error might mean a new XML %d\n\t%.*s\n", junk_index, BUFF_SIZE, read_buffer);
+				XML_ParserFree(p);
+				p = create_delta_parser(&delta_xml);
+				if (XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
+					continue;
+				}
+			}
+			fprintf(stderr, "delta Parse error (%d) at line %lu:\n%s\n",
+				ret,
 				XML_GetCurrentLineNumber(p),
 				XML_ErrorString(XML_GetErrorCode(p)));
 			err(1, "parse failed - basic xml error");
 		}
 	}
-	XML_Parse(p, "", 0, 1);
 }
-
 

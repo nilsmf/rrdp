@@ -18,6 +18,8 @@ typedef enum notification_scope {
 
 typedef struct notificationXML {
 	NOTIFICATION_SCOPE scope;
+	FILE *snapshot_filename_in;
+	FILE *delta_filename_in;
 	char *xmlns;
 	char *version;
 	char *session_id;
@@ -71,7 +73,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		}
 
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
-		print_notification_xml(notification_xml);
+		//print_notification_xml(notification_xml);
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
 	} else if (strcmp("snapshot", el) == 0) {
@@ -125,44 +127,71 @@ void notification_elem_end(void *data, const char *el) {
 			err(1, "parse failed - exited notification elem unexpectedely");
 		}
 		notification_xml->scope = NOTIFICATION_SCOPE_END;
-		print_notification_xml(notification_xml);
-		printf("end %s\n", el);
+		//print_notification_xml(notification_xml);
+		//printf("end %s\n", el);
 	} else if (strcmp("snapshot", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT) {
 			err(1, "parse failed - exited snapshot elem unexpectedely");
 		}
+		fprintf(notification_xml->snapshot_filename_in, "%s\n", notification_xml->snapshot_uri);
+		fflush(notification_xml->snapshot_filename_in);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else if (strcmp("delta", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA) {
 			err(1, "parse failed - exited delta elem unexpectedely");
 		}
-		print_notification_xml(notification_xml);
+		fprintf(notification_xml->delta_filename_in, "%s\n", notification_xml->delta_uri);
+		fflush(notification_xml->delta_filename_in);
+		//print_notification_xml(notification_xml);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else {
 		err(1, "parse failed - unexpected elem exit found");
 	}
 }
 
-void process_notification(FILE* notification_file_out) {
+XML_Parser create_notify_parser(NOTIFICATION_XML **notification_xml, FILE *snapshot_filename_in, FILE *delta_filename_in) {
+	if (notification_xml) {
+		free(*notification_xml);
+	}
+	*notification_xml = calloc(1, sizeof(NOTIFICATION_XML));
+	(*notification_xml)->snapshot_filename_in = snapshot_filename_in;
+	(*notification_xml)->delta_filename_in = delta_filename_in;
+
+	XML_Parser p = XML_ParserCreate(NULL);
+	XML_SetElementHandler(p, notification_elem_start, notification_elem_end);
+	XML_SetUserData(p, (void*)*notification_xml);
+	
+	return p;
+}
+
+void process_notification(FILE* notification_file_out,
+			  FILE* snapshot_filename_in,
+			  FILE* delta_filename_in) {
+	int ret;
 	int BUFF_SIZE = 200;
 	char read_buffer[BUFF_SIZE];
-	NOTIFICATION_XML *notification_xml = calloc(1, sizeof(NOTIFICATION_XML));
-	XML_Parser p = XML_ParserCreate(NULL);
-
-	XML_SetElementHandler(p, notification_elem_start, notification_elem_end);
-	XML_SetUserData(p, (void*)notification_xml);
+	NOTIFICATION_XML *notification_xml = NULL;
+	XML_Parser p = create_notify_parser(&notification_xml, snapshot_filename_in, delta_filename_in);
 	//printf("reading\n");
 	while (fgets(read_buffer, BUFF_SIZE, notification_file_out)) {
 		//printf("%ld chars read:\n", strlen(read_buffer));
-		//printf("%.200s\n", read_buffer);
+		printf("-----notify---- %.200s\n", read_buffer);
 		fflush(stdout);
 		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-			fprintf(stderr, "Parse error at line %lu:\n%s\n",
+			if ((ret = XML_GetErrorCode(p)) == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
+				int junk_index = XML_GetCurrentByteIndex(p);
+				fprintf(stderr, "-------------------------------\nJunk error might mean a new XML %d\n\t%.*s\n", junk_index, BUFF_SIZE, read_buffer);
+				p = create_notify_parser(&notification_xml, snapshot_filename_in, delta_filename_in);
+				if (XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
+					continue;
+				}
+			}
+			fprintf(stderr, "notify Parse error (%d) at line %lu:\n%s\n",
+				ret,
 				XML_GetCurrentLineNumber(p),
 				XML_ErrorString(XML_GetErrorCode(p)));
 			err(1, "parse failed - basic xml error");
 		}
 	}
-	XML_Parse(p, "", 0, 1);
 }
 
