@@ -1,3 +1,5 @@
 #include <stdio.h>
 
-void process_delta(FILE* delta_file_out);
+#include <src/fetch_util.h>
+
+XML_DATA *new_delta_xml_data();

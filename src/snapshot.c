@@ -8,6 +8,7 @@
 #include <expat.h>
 
 #include <src/util.h>
+#include <src/snapshot.h>
 
 typedef enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
@@ -177,33 +178,15 @@ void snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-void process_snapshot(FILE* snapshot_file_out) {
-	int ret;
-	int BUFF_SIZE = 200;
-	char read_buffer[BUFF_SIZE];
-	SNAPSHOT_XML *snapshot_xml = calloc(1, sizeof(SNAPSHOT_XML));
-	XML_Parser p = XML_ParserCreate(NULL);
+XML_DATA *new_snapshot_xml_data() {
+	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
-	XML_SetElementHandler(p, snapshot_elem_start, snapshot_elem_end);
-	XML_SetCharacterDataHandler(p, snapshot_content_handler);
-	XML_SetUserData(p, (void*)snapshot_xml);
-	//printf("reading\n");
-	while (fgets(read_buffer, BUFF_SIZE, snapshot_file_out)) {
-		//printf("%ld chars read:\n", strlen(read_buffer));
-		//printf("%.200s\n", read_buffer);
-		fflush(stdout);
-		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-			if ((ret = XML_GetErrorCode(p)) == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
-				int junk_index = XML_GetCurrentByteIndex(p);
-				fprintf(stderr, "-------------------------------\nJunk error might mean a new XML %d\n\t%.*s\n", junk_index, BUFF_SIZE, read_buffer);
-			}
-			fprintf(stderr, "snapshot Parse error (%d) at line %lu:\n%s\n",
-				ret,
-				XML_GetCurrentLineNumber(p),
-				XML_ErrorString(XML_GetErrorCode(p)));
-			err(1, "parse failed - basic xml error");
-		}
-	}
+	xml_data->xml_data = calloc(1, sizeof(SNAPSHOT_XML));
+	xml_data->parser = XML_ParserCreate(NULL);
+	XML_SetElementHandler(xml_data->parser, snapshot_elem_start, snapshot_elem_end);
+	XML_SetCharacterDataHandler(xml_data->parser, snapshot_content_handler);
+	XML_SetUserData(xml_data->parser, xml_data->xml_data);
+
+	return xml_data;
 }
-
 

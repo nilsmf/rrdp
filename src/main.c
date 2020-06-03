@@ -45,68 +45,45 @@ void cleanopts(opts *o) {
 	free(o);
 }
 
-int main(int argc, char** argv) {
-	pid_t	pid;
-	opts *options;
-	int snapshot_file_pipe[2];
-	FILE *snapshot_file_in;
-	FILE *snapshot_file_out;
-	int delta_file_pipe[2];
-	FILE *delta_file_in;
-	FILE *delta_file_out;
-	
-	options = getopts(argc, argv);
-
-    	if (pipe(snapshot_file_pipe) != 0)
-		err(1, "pipe");
-	/* split off the snapshot processor/fetcher */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		close(snapshot_file_pipe[1]);
-		snapshot_file_out = fdopen(snapshot_file_pipe[0], "r");
-		process_snapshot(snapshot_file_out);
-		close(snapshot_file_pipe[0]);
-		exit(0);
+void fetch_delta_xml(char *uri) {
+	XML_DATA *delta_xml_data = new_delta_xml_data();
+	if (fetch_xml_url(uri, delta_xml_data) != 0) {
+		err(1, "failed to curl");
 	}
-	close(snapshot_file_pipe[0]);
+}
 
-    	if (pipe(delta_file_pipe) != 0)
-		err(1, "pipe");
-	/* split off the delta processor/fetcher */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		close(delta_file_pipe[1]);
-		delta_file_out = fdopen(delta_file_pipe[0], "r");
-		process_delta(delta_file_out);
-		close(delta_file_pipe[0]);
-		exit(0);
+void fetch_snapshot_xml(char *uri) {
+	XML_DATA *snapshot_xml_data = new_snapshot_xml_data();
+	if (fetch_xml_url(uri, snapshot_xml_data) != 0) {
+		err(1, "failed to curl");
 	}
-	close(delta_file_pipe[0]);
+}
 
+void fetch_notification_xml() {
 	XML_DATA *notify_xml_data = new_notify_xml_data();
 	if (fetch_xml_url("https://ca.rg.net/rrdp/notify.xml", notify_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
 	NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)notify_xml_data->xml_data;
 
-	snapshot_file_in = fdopen(snapshot_file_pipe[1], "w");
-	delta_file_in = fdopen(delta_file_pipe[1], "w");
 	if (nxml) {
 		print_notification_xml(nxml);
-		//fetch_url_old(nxml->snapshot_uri, snapshot_file_in);
-	/*	while (!STAILQ_EMPTY(&(nxml->delta_q))) {
+		fetch_snapshot_xml(nxml->snapshot_uri);
+		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
 			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
-			STAILQ_REMOVE_HEAD(&(nxml->delta_q), delta);
-			fetch_url_old(d->uri, delta_file_in);
+			STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
+			fetch_delta_xml(d->uri);
 			free_delta(d);
-		}*/
+		}
 	}
-	fclose(snapshot_file_in);
-	fclose(delta_file_in);
-	close(snapshot_file_pipe[1]);
-	close(delta_file_pipe[1]);
+}
+
+int main(int argc, char** argv) {
+	opts *options;
+
+	options = getopts(argc, argv);
+
+	fetch_notification_xml();
 
 	cleanopts(options);
 }

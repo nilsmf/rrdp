@@ -177,7 +177,7 @@ XML_DATA *new_notify_xml_data() {
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, notification_elem_start, notification_elem_end);
 	XML_SetUserData(xml_data->parser, xml_data->xml_data);
-	
+
 	return xml_data;
 }
 

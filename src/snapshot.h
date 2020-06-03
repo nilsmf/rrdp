@@ -1,3 +1,4 @@
 #include <stdio.h>
+#include <src/fetch_util.h>
 
-void process_snapshot(FILE* snapshot_file_out);
+XML_DATA *new_snapshot_xml_data();

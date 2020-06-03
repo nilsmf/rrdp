@@ -8,6 +8,7 @@
 #include <expat.h>
 
 #include <src/util.h>
+#include <src/delta.h>
 
 typedef enum delta_scope {
 	DELTA_SCOPE_NONE,
@@ -194,46 +195,15 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_Parser create_delta_parser(DELTA_XML **delta_xml) {
-	if (delta_xml) {
-		free(*delta_xml);
-	}
-	*delta_xml = calloc(1, sizeof(DELTA_XML));
-	XML_Parser p = XML_ParserCreate(NULL);
+XML_DATA *new_delta_xml_data() {
+	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
-	XML_SetElementHandler(p, delta_elem_start, delta_elem_end);
-	XML_SetCharacterDataHandler(p, delta_content_handler);
-	XML_SetUserData(p, (void*)delta_xml);
-	return p;
-}
+	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));
+	xml_data->parser = XML_ParserCreate(NULL);
+	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);
+	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
+	XML_SetUserData(xml_data->parser, xml_data->xml_data);
 
-void process_delta(FILE* delta_file_out) {
-	int ret;
-	int BUFF_SIZE = 200;
-	char read_buffer[BUFF_SIZE];
-	DELTA_XML *delta_xml = NULL;
-	XML_Parser p = create_delta_parser(&delta_xml);
-	//printf("reading\n");
-	while (fgets(read_buffer, BUFF_SIZE, delta_file_out)) {
-		//printf("%ld chars read:\n", strlen(read_buffer));
-		//printf("%.200s\n", read_buffer);
-		fflush(stdout);
-		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-			if ((ret = XML_GetErrorCode(p)) == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
-				int junk_index = XML_GetCurrentByteIndex(p);
-				fprintf(stderr, "-------------------------------\nJunk error might mean a new XML %d\n\t%.*s\n", junk_index, BUFF_SIZE, read_buffer);
-				XML_ParserFree(p);
-				p = create_delta_parser(&delta_xml);
-				if (XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-					continue;
-				}
-			}
-			fprintf(stderr, "delta Parse error (%d) at line %lu:\n%s\n",
-				ret,
-				XML_GetCurrentLineNumber(p),
-				XML_ErrorString(XML_GetErrorCode(p)));
-			err(1, "parse failed - basic xml error");
-		}
-	}
+	return xml_data;
 }
 

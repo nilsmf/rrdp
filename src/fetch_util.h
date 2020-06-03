@@ -1,3 +1,6 @@
+#ifndef _FETCHUTILH_
+#define _FETCHUTILH_
+
 #include <stdio.h>
 #include <expat.h>
 
@@ -8,3 +11,6 @@ typedef struct xmldata {
 
 int fetch_xml_url(char *url, XML_DATA *data);
 void fetch_file(char *filename, FILE* stream_in);
+
+#endif
+
