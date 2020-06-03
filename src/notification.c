@@ -6,31 +6,51 @@
 #include <expat.h>
 
 #include <src/notification.h>
+#include <src/util.h>
 
-typedef enum notification_scope {
-	NOTIFICATION_SCOPE_NONE,
-	NOTIFICATION_SCOPE_NOTIFICATION,
-	NOTIFICATION_SCOPE_SNAPSHOT,
-	NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT,
-	NOTIFICATION_SCOPE_DELTA,
-	NOTIFICATION_SCOPE_END
-} NOTIFICATION_SCOPE;
+DELTA_ITEM *new_delta_item(const char *uri, const char *hash, const char *serial) {
+	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));
+	if (d) {
+		d->uri = strdup(uri);
+		d->hash = strdup(hash);
+		d->serial = strdup(serial);
+	}
+	return d;
+}
 
-typedef struct notificationXML {
-	NOTIFICATION_SCOPE scope;
-	FILE *snapshot_filename_in;
-	FILE *delta_filename_in;
-	char *xmlns;
-	char *version;
-	char *session_id;
-	char *serial;
-	char *snapshot_uri;
-	char *snapshot_hash;
-	char *delta_uri;
-	char *delta_hash;
-	char *delta_serial;
+DELTA_ITEM *free_delta(DELTA_ITEM *d) {
+	free(d->uri);
+	free(d->hash);
+	free(d->serial);
+	free(d);
 
-} NOTIFICATION_XML;
+	return NULL;
+}
+
+NOTIFICATION_XML *new_notification_xml() {
+	NOTIFICATION_XML *nxml = calloc(1, sizeof(NOTIFICATION_XML));
+//	nxml->delta_q = STAILQ_HEAD_INITIALIZER(nxml->delta_q);
+	STAILQ_INIT(&(nxml->delta_q));
+	return nxml;
+}
+
+NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml) {
+	if (nxml) {
+		free(nxml->xmlns);
+		free(nxml->version);
+		free(nxml->session_id);
+		free(nxml->serial);
+		free(nxml->snapshot_uri);
+		free(nxml->snapshot_hash);
+		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
+			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
+			STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
+			free_delta(d);
+		}
+	}
+	free(nxml);
+	return NULL;
+}
 
 void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 	printf("scope: %d\n", notification_xml->scope);
@@ -40,16 +60,13 @@ void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 	printf("serial: %s\n", notification_xml->serial ?: "NULL");
 	printf("snapshot_uri: %s\n", notification_xml->snapshot_uri ?: "NULL");
 	printf("snapshot_hash: %s\n", notification_xml->snapshot_hash ?: "NULL");
-	printf("delta_uri: %s\n", notification_xml->delta_uri ?: "NULL");
-	printf("delta_hash: %s\n", notification_xml->delta_hash ?: "NULL");
-	printf("delta_serial: %s\n", notification_xml->delta_serial ?: "NULL");
 }
 
 void notification_elem_start(void *data, const char *el, const char **attr) {
 	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)data;
-	// Can only enter here once as we should have no ways to get back to NONE scope
+	// Can only enter here once as we should have no ways to get back to START scope
 	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NONE) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
 			err(1, "parse failed - entered notification elem unexpectedely");
 		}
 		for (int i = 0; attr[i]; i += 2) {
@@ -98,20 +115,28 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
 			err(1, "parse failed - entered delta elem unexpectedely");
 		}
+		const char *delta_uri = NULL;
+		const char *delta_hash = NULL;
+		const char *delta_serial = NULL;
 		for (int i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
-				notification_xml->delta_uri = strdup(attr[i+1]);
+				delta_uri = attr[i+1];
 			} else if (strcmp("hash", attr[i]) == 0) {
-				notification_xml->delta_hash = strdup(attr[i+1]);
+				delta_hash = attr[i+1];
 			} else if (strcmp("serial", attr[i]) == 0) {
-				notification_xml->delta_serial = strdup(attr[i+1]);
+				delta_serial = attr[i+1];
 			} else {
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
 			}
 		}
-		if (!notification_xml->delta_uri ||
-		    !notification_xml->delta_hash ||
-		    !notification_xml->delta_serial) {
+		if (delta_uri && delta_hash && delta_serial) {
+			DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
+			if (d) {
+				STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
+			} else {
+				err(1, "alloc failed - creating delta");
+			}
+		} else {
 			err(1, "parse failed - incomplete snapshot attributes");
 		}
 		notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
@@ -133,15 +158,11 @@ void notification_elem_end(void *data, const char *el) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT) {
 			err(1, "parse failed - exited snapshot elem unexpectedely");
 		}
-		fprintf(notification_xml->snapshot_filename_in, "%s\n", notification_xml->snapshot_uri);
-		fflush(notification_xml->snapshot_filename_in);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else if (strcmp("delta", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA) {
 			err(1, "parse failed - exited delta elem unexpectedely");
 		}
-		fprintf(notification_xml->delta_filename_in, "%s\n", notification_xml->delta_uri);
-		fflush(notification_xml->delta_filename_in);
 		//print_notification_xml(notification_xml);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else {
@@ -149,49 +170,14 @@ void notification_elem_end(void *data, const char *el) {
 	}
 }
 
-XML_Parser create_notify_parser(NOTIFICATION_XML **notification_xml, FILE *snapshot_filename_in, FILE *delta_filename_in) {
-	if (notification_xml) {
-		free(*notification_xml);
-	}
-	*notification_xml = calloc(1, sizeof(NOTIFICATION_XML));
-	(*notification_xml)->snapshot_filename_in = snapshot_filename_in;
-	(*notification_xml)->delta_filename_in = delta_filename_in;
+XML_DATA *new_notify_xml_data() {
+	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
-	XML_Parser p = XML_ParserCreate(NULL);
-	XML_SetElementHandler(p, notification_elem_start, notification_elem_end);
-	XML_SetUserData(p, (void*)*notification_xml);
+	xml_data->xml_data = (void*)new_notification_xml();
+	xml_data->parser = XML_ParserCreate(NULL);
+	XML_SetElementHandler(xml_data->parser, notification_elem_start, notification_elem_end);
+	XML_SetUserData(xml_data->parser, xml_data->xml_data);
 	
-	return p;
-}
-
-void process_notification(FILE* notification_file_out,
-			  FILE* snapshot_filename_in,
-			  FILE* delta_filename_in) {
-	int ret;
-	int BUFF_SIZE = 200;
-	char read_buffer[BUFF_SIZE];
-	NOTIFICATION_XML *notification_xml = NULL;
-	XML_Parser p = create_notify_parser(&notification_xml, snapshot_filename_in, delta_filename_in);
-	//printf("reading\n");
-	while (fgets(read_buffer, BUFF_SIZE, notification_file_out)) {
-		//printf("%ld chars read:\n", strlen(read_buffer));
-		printf("-----notify---- %.200s\n", read_buffer);
-		fflush(stdout);
-		if (!XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-			if ((ret = XML_GetErrorCode(p)) == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
-				int junk_index = XML_GetCurrentByteIndex(p);
-				fprintf(stderr, "-------------------------------\nJunk error might mean a new XML %d\n\t%.*s\n", junk_index, BUFF_SIZE, read_buffer);
-				p = create_notify_parser(&notification_xml, snapshot_filename_in, delta_filename_in);
-				if (XML_Parse(p, read_buffer, strlen(read_buffer), 0)) {
-					continue;
-				}
-			}
-			fprintf(stderr, "notify Parse error (%d) at line %lu:\n%s\n",
-				ret,
-				XML_GetCurrentLineNumber(p),
-				XML_ErrorString(XML_GetErrorCode(p)));
-			err(1, "parse failed - basic xml error");
-		}
-	}
+	return xml_data;
 }
 

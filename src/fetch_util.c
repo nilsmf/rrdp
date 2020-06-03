@@ -2,9 +2,25 @@
 #include <err.h>
 #include <curl/curl.h>
 
+#include <src/fetch_util.h>
+
 #define USER_AGENT "rrdp-client v0.1"
 
-void fetch_url(char *url, FILE* stream_in) {
+size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+	XML_Parser p = ((XML_DATA*)userdata)->parser;
+	if (!p) {
+		return 0;
+	}
+	if (!XML_Parse(p, ptr, nmemb, 0)) {
+		fprintf(stderr, "Parse error at line %lu:\n%s\n",
+			XML_GetCurrentLineNumber(p),
+			XML_ErrorString(XML_GetErrorCode(p)));
+		err(1, "parse failed - basic xml error");
+	}
+	return nmemb;
+}
+
+int fetch_xml_url(char *url, XML_DATA *data) {
 	if (!url) {
 		err(1, "missing url");
 	}
@@ -14,12 +30,14 @@ void fetch_url(char *url, FILE* stream_in) {
 		fflush(stdout);
 		CURLcode res;
 		curl_easy_setopt(curl, CURLOPT_URL, url);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, stream_in);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 		curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
 		res = curl_easy_perform(curl);
 		printf("curl response: %d\n", res);
 		fflush(stdout);
 		curl_easy_cleanup(curl);
+		return res;
 	} else {
 		err(1, "curl init failure");
 	}

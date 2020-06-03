@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include <err.h>
 
-#include <src/fetch_util.h>
 #include <src/notification.h>
 #include <src/snapshot.h>
 #include <src/delta.h>
@@ -46,24 +45,6 @@ void cleanopts(opts *o) {
 	free(o);
 }
 
-void handle_snapshot_filenames(FILE *snapshot_filename_out, FILE *snapshot_file_in) {
-	size_t buff_size = sizeof(char)*200;
-	char *buff = malloc(buff_size);
-	while(getline(&buff, &buff_size, snapshot_filename_out)) {
-		strrchr(buff, '\n')[0] = '\0';
-		fetch_url(buff, snapshot_file_in);
-	}
-}
-
-void handle_delta_filenames(FILE *delta_filename_out, FILE *delta_file_in) {
-	size_t buff_size = sizeof(char)*200;
-	char *buff = malloc(buff_size);
-	while(getline(&buff, &buff_size, delta_filename_out)) {
-		strrchr(buff, '\n')[0] = '\0';
-		fetch_url(buff, delta_file_in);
-	}
-}
-
 int main(int argc, char** argv) {
 	pid_t	pid;
 	opts *options;
@@ -73,15 +54,6 @@ int main(int argc, char** argv) {
 	int delta_file_pipe[2];
 	FILE *delta_file_in;
 	FILE *delta_file_out;
-	int snapshot_filename_pipe[2];
-	FILE *snapshot_filename_in;
-	FILE *snapshot_filename_out;
-	int delta_filename_pipe[2];
-	FILE *delta_filename_in;
-	FILE *delta_filename_out;
-	int notification_file_pipe[2];
-	FILE *notification_file_in;
-	FILE *notification_file_out;
 	
 	options = getopts(argc, argv);
 
@@ -113,65 +85,29 @@ int main(int argc, char** argv) {
 	}
 	close(delta_file_pipe[0]);
 
-    	if (pipe(snapshot_filename_pipe) != 0)
-		err(1, "pipe");
-	/* split off the snapshot filename processor/file reader */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		close(snapshot_filename_pipe[1]);
-		snapshot_filename_out = fdopen(snapshot_file_pipe[0], "r");
-		snapshot_file_in = fdopen(snapshot_file_pipe[1], "w");
-		handle_snapshot_filenames(snapshot_filename_out, snapshot_file_in);
-		close(snapshot_filename_pipe[0]);
-		exit(0);
+	XML_DATA *notify_xml_data = new_notify_xml_data();
+	if (fetch_xml_url("https://ca.rg.net/rrdp/notify.xml", notify_xml_data) != 0) {
+		err(1, "failed to curl");
 	}
-	close(snapshot_filename_pipe[0]);
+	NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)notify_xml_data->xml_data;
 
-    	if (pipe(delta_filename_pipe) != 0)
-		err(1, "pipe");
-	/* split off the delta filename processor/fetcher */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		close(delta_filename_pipe[1]);
-		delta_filename_out = fdopen(delta_file_pipe[0], "r");
-		delta_file_in = fdopen(delta_file_pipe[1], "w");
-		handle_delta_filenames(delta_filename_out, delta_file_in);
-		close(delta_filename_pipe[0]);
-		exit(0);
+	snapshot_file_in = fdopen(snapshot_file_pipe[1], "w");
+	delta_file_in = fdopen(delta_file_pipe[1], "w");
+	if (nxml) {
+		print_notification_xml(nxml);
+		//fetch_url_old(nxml->snapshot_uri, snapshot_file_in);
+	/*	while (!STAILQ_EMPTY(&(nxml->delta_q))) {
+			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
+			STAILQ_REMOVE_HEAD(&(nxml->delta_q), delta);
+			fetch_url_old(d->uri, delta_file_in);
+			free_delta(d);
+		}*/
 	}
-	close(delta_filename_pipe[0]);
+	fclose(snapshot_file_in);
+	fclose(delta_file_in);
+	close(snapshot_file_pipe[1]);
+	close(delta_file_pipe[1]);
 
-	if (pipe(notification_file_pipe) != 0)
-		err(1, "pipe");
-	/* split off notification processor */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		close(notification_file_pipe[1]);
-		notification_file_out = fdopen(notification_file_pipe[0], "r");
-		delta_filename_in = fdopen(delta_filename_pipe[1], "w");
-		snapshot_filename_in = fdopen(snapshot_filename_pipe[1], "w");
-		process_notification(notification_file_out, snapshot_filename_in, delta_filename_in);
-		close(notification_file_pipe[0]);
-		close(snapshot_filename_pipe[1]);
-		close(delta_filename_pipe[1]);
-		exit(0);
-	}
-	close(notification_file_pipe[0]);
-
-	/* split off notification reader */
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-	if (pid == 0) {
-		notification_file_in = fdopen(notification_file_pipe[1], "w");
-		//fetch_file("regress/notify.xml", notification_file_in);
-		fetch_url("https://ca.rg.net/rrdp/notify.xml", notification_file_in);
-		//close(notification_file_pipe[1]);
-		exit(0);
-	}
-	
 	cleanopts(options);
 }
 
