@@ -7,7 +7,6 @@
 
 #include <expat.h>
 
-#include <src/util.h>
 #include <src/snapshot.h>
 
 typedef enum snapshot_scope {
@@ -67,7 +66,8 @@ int write_snapshot_publish(SNAPSHOT_XML *snapshot_xml) {
 }
 
 void snapshot_elem_start(void *data, const char *el, const char **attr) {
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
@@ -119,7 +119,8 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 }
 
 void snapshot_elem_end(void *data, const char *el) {
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
 			err(1, "parse failed - exited snapshot elem unexpectedely");
@@ -152,7 +153,8 @@ void snapshot_elem_end(void *data, const char *el) {
 void snapshot_content_handler(void *data, const char *content, int length)
 {
 	int new_length;
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
 		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
 		if (length == 1 && content[0] == '\n') {
@@ -178,14 +180,15 @@ void snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_snapshot_xml_data() {
+XML_DATA *new_snapshot_xml_data(OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(SNAPSHOT_XML));
+	xml_data->opts = opts;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, snapshot_elem_start, snapshot_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, snapshot_content_handler);
-	XML_SetUserData(xml_data->parser, xml_data->xml_data);
+	XML_SetUserData(xml_data->parser, xml_data);
 
 	return xml_data;
 }

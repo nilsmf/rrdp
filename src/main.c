@@ -9,7 +9,7 @@
 
 // libxm (l?)
 // ftp/curl
-// 
+//
 // xml has urls to download the files
 //
 // rrdp servers
@@ -26,41 +26,27 @@
 //
 // nice to have optimise with keep alives etc.
 //
+// - start to check which things need to be updated (serial #)
+// - start to validate file existance and hash
+// - add 2nd layer of files in case of error
+// - start to handle errors better
 
-typedef struct Opts {
-	int something;
-} opts;
-
-opts* newOpt(int sthing) {
-	opts *o = malloc(sizeof(opts));
-	o->something = sthing;
-	return o;
-}
-
-opts* getopts(int argc, char** argv) {
-	return newOpt(4);
-}
-
-void cleanopts(opts *o) {
-	free(o);
-}
-
-void fetch_delta_xml(char *uri) {
-	XML_DATA *delta_xml_data = new_delta_xml_data();
+void fetch_delta_xml(char *uri, OPTS *opts) {
+	XML_DATA *delta_xml_data = new_delta_xml_data(opts);
 	if (fetch_xml_url(uri, delta_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
 }
 
-void fetch_snapshot_xml(char *uri) {
-	XML_DATA *snapshot_xml_data = new_snapshot_xml_data();
+void fetch_snapshot_xml(char *uri ,OPTS *opts) {
+	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(opts);
 	if (fetch_xml_url(uri, snapshot_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
 }
 
-void fetch_notification_xml() {
-	XML_DATA *notify_xml_data = new_notify_xml_data();
+void fetch_notification_xml(OPTS *opts) {
+	XML_DATA *notify_xml_data = new_notify_xml_data(opts);
 	if (fetch_xml_url("https://ca.rg.net/rrdp/notify.xml", notify_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -68,23 +54,23 @@ void fetch_notification_xml() {
 
 	if (nxml) {
 		print_notification_xml(nxml);
-		fetch_snapshot_xml(nxml->snapshot_uri);
+		fetch_snapshot_xml(nxml->snapshot_uri, opts);
 		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
 			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
 			STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
-			fetch_delta_xml(d->uri);
+			fetch_delta_xml(d->uri, opts);
 			free_delta(d);
 		}
 	}
 }
 
-int main(int argc, char** argv) {
-	opts *options;
+int main(int argc, char **argv) {
+	OPTS *opts;
 
-	options = getopts(argc, argv);
+	opts = getopts(argc, argv);
 
-	fetch_notification_xml();
+	fetch_notification_xml(opts);
 
-	cleanopts(options);
+	cleanopts(opts);
 }
 

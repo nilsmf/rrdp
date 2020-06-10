@@ -6,7 +6,6 @@
 #include <expat.h>
 
 #include <src/notification.h>
-#include <src/util.h>
 
 DELTA_ITEM *new_delta_item(const char *uri, const char *hash, const char *serial) {
 	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));
@@ -63,7 +62,8 @@ void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 }
 
 void notification_elem_start(void *data, const char *el, const char **attr) {
-	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)xml_data->xml_data;
 	// Can only enter here once as we should have no ways to get back to START scope
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
@@ -146,7 +146,8 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 }
 
 void notification_elem_end(void *data, const char *el) {
-	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)xml_data->xml_data;
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
 			err(1, "parse failed - exited notification elem unexpectedely");
@@ -170,13 +171,14 @@ void notification_elem_end(void *data, const char *el) {
 	}
 }
 
-XML_DATA *new_notify_xml_data() {
+XML_DATA *new_notify_xml_data(OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
-	xml_data->xml_data = (void*)new_notification_xml();
+	xml_data->xml_data = (void*)new_notification_xml(opts);
+	xml_data->opts = opts;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, notification_elem_start, notification_elem_end);
-	XML_SetUserData(xml_data->parser, xml_data->xml_data);
+	XML_SetUserData(xml_data->parser, xml_data);
 
 	return xml_data;
 }

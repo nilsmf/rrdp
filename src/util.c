@@ -9,6 +9,23 @@
 
 #include <src/util.h>
 
+OPTS *newOpt(const char *basedir_primary,
+	     const char *basedir_working) {
+	OPTS *o = malloc(sizeof(OPTS));
+	o->basedir_primary = basedir_primary;
+	o->basedir_working = basedir_working;
+	return o;
+}
+
+OPTS *getopts(int argc, char **argv) {
+	return newOpt("/tmp/rrdp", "/tmp/rrdp_working");
+}
+
+void cleanopts(OPTS *o) {
+	free(o);
+}
+
+
 // Truncate non base64 chars
 int strip_non_b64(const char * str, int len, char *out) {
 	char c;

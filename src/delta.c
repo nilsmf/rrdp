@@ -7,7 +7,6 @@
 
 #include <expat.h>
 
-#include <src/util.h>
 #include <src/delta.h>
 
 typedef enum delta_scope {
@@ -27,7 +26,6 @@ typedef struct deltaXML {
 	char *publish_hash;
 	char *publish_data;
 	unsigned int publish_data_length;
-
 } DELTA_XML;
 
 void print_delta_xml(DELTA_XML *delta_xml) {
@@ -75,7 +73,8 @@ int write_delta_withdraw(DELTA_XML *delta_xml) {
 }
 
 void delta_elem_start(void *data, const char *el, const char **attr) {
-	DELTA_XML *delta_xml = (DELTA_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_NONE) {
@@ -129,7 +128,8 @@ void delta_elem_start(void *data, const char *el, const char **attr) {
 }
 
 void delta_elem_end(void *data, const char *el) {
-	DELTA_XML *delta_xml = (DELTA_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_DELTA) {
 			err(1, "parse failed - exited delta elem unexpectedely");
@@ -169,7 +169,8 @@ void delta_elem_end(void *data, const char *el) {
 void delta_content_handler(void *data, const char *content, int length)
 {
 	int new_length;
-	DELTA_XML *delta_xml = (DELTA_XML*)data;
+	XML_DATA *xml_data = (XML_DATA*)data;
+	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
 	if (delta_xml->scope == DELTA_SCOPE_PUBLISH) {
 		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
 		if (length == 1 && content[0] == '\n') {
@@ -195,14 +196,15 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_delta_xml_data() {
+XML_DATA *new_delta_xml_data(OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));
+	xml_data->opts = opts;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
-	XML_SetUserData(xml_data->parser, xml_data->xml_data);
+	XML_SetUserData(xml_data->parser, xml_data);
 
 	return xml_data;
 }
