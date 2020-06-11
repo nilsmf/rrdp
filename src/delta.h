@@ -3,4 +3,4 @@
 #include <src/fetch_util.h>
 #include <src/util.h>
 
-XML_DATA *new_delta_xml_data(OPTS *opts);
+XML_DATA *new_delta_xml_data(char *uri, OPTS *opts);

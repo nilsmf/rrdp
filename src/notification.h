@@ -13,13 +13,12 @@ typedef enum notification_scope {
 	NOTIFICATION_SCOPE_END
 } NOTIFICATION_SCOPE;
 
-typedef enum xml_parse_status {
-	XML_PARSE_STATUS_NONE,
-	XML_PARSE_STATUS_PARSING,
-	XML_PARSE_STATUS_VALID_SNAPSHOT,
-	XML_PARSE_STATUS_VALID_DELTAS,
-	XML_PARSE_STATUS_ERROR
-} XML_PARSE_STATUS;
+typedef enum notify_state {
+	NOTIFY_STATE_SNAPSHOT,
+	NOTIFY_STATE_DELTAS,
+	NOTIFY_STATE_NONE,
+	NOTIFY_STATE_ERROR
+} NOTIFY_STATE;
 
 typedef struct delta_item {
 	char *uri;
@@ -39,13 +38,16 @@ typedef struct notificationXML {
 	char *version;
 	char *session_id;
 	char *serial;
+	char *current_session_id;
+	char *current_serial;
 	char *snapshot_uri;
 	char *snapshot_hash;
 	struct DELTA_Q delta_q;
-	XML_PARSE_STATUS status;
+	NOTIFY_STATE state;
 } NOTIFICATION_XML;
 NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml);
-NOTIFICATION_XML *new_notification_xml(OPTS *opts);
+NOTIFICATION_XML *new_notification_xml();
 void print_notification_xml(NOTIFICATION_XML *notification_xml);
 
-XML_DATA *new_notify_xml_data();
+XML_DATA *new_notify_xml_data(char *uri, OPTS *opts);
+void save_notify_data(XML_DATA *xml_data);

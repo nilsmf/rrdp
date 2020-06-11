@@ -83,7 +83,7 @@ enum rtype {
 int rsync_uri_parse(const char **hostp, size_t *hostsz,
     const char **modulep, size_t *modulesz,
     const char **pathp, size_t *pathsz,
-    enum rtype *rtypep, const char *uri)
+    enum rtype *rtypep, const char *uri, const char *proto)
 {
 	const char	*host, *module, *path;
 	size_t		 sz;
@@ -104,10 +104,12 @@ int rsync_uri_parse(const char **hostp, size_t *hostsz,
 		*pathp = 0;
 	if (rtypep != NULL)
 		*rtypep = RTYPE_EOF;
+	if (proto == NULL)
+		proto = "rsync://";
 
 	/* Case-insensitive rsync URI. */
 
-	if (strncasecmp(uri, "rsync://", 8)) {
+	if (strncasecmp(uri, proto, strlen(proto))) {
 		warnx("%s: not using rsync schema", uri);
 		return 0;
 	}
@@ -178,7 +180,7 @@ int rsync_uri_parse(const char **hostp, size_t *hostsz,
 
 	return 1;
 }
-char *generate_filename_from_uri(const char *uri, const char *base_path) {
+char *generate_filename_from_uri(const char *uri, const char *base_path, const char *proto) {
 	if (!uri || !base_path) {
 		err(1, "tried to write to defunct publish uri");
 	}
@@ -192,7 +194,7 @@ char *generate_filename_from_uri(const char *uri, const char *base_path) {
 	if (rsync_uri_parse(&host, &hostsz,
 			    NULL, NULL,
 			    &path, &pathsz,
-			    NULL, uri) == 0) {
+			    NULL, uri, proto) == 0) {
 		err(1, "parse uri elem fail");
 	}
 

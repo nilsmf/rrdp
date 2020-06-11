@@ -42,7 +42,7 @@ FILE *open_delta_file(const char *publish_uri) {
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
 	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(publish_uri, base_local);
+	char *filename = generate_filename_from_uri(publish_uri, base_local, NULL);
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
 	path_delim[0] = '\0';
@@ -66,7 +66,7 @@ int write_delta_publish(DELTA_XML *delta_xml) {
 
 int write_delta_withdraw(DELTA_XML *delta_xml) {
 	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(delta_xml->publish_uri, base_local);
+	char *filename = generate_filename_from_uri(delta_xml->publish_uri, base_local, NULL);
 	int ret = unlink(filename);
 	free(filename);
 	return ret;
@@ -196,10 +196,11 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_delta_xml_data(OPTS *opts) {
+XML_DATA *new_delta_xml_data(char *uri, OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));
+	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);

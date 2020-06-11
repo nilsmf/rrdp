@@ -42,7 +42,7 @@ FILE *open_snapshot_file(const char *publish_uri) {
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
 	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(publish_uri, base_local);
+	char *filename = generate_filename_from_uri(publish_uri, base_local, NULL);
 
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
@@ -180,10 +180,11 @@ void snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_snapshot_xml_data(OPTS *opts) {
+XML_DATA *new_snapshot_xml_data(char *uri, OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(SNAPSHOT_XML));
+	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, snapshot_elem_start, snapshot_elem_end);

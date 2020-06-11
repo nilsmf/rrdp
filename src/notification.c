@@ -51,10 +51,64 @@ NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml) {
 	return NULL;
 }
 
+void check_state(NOTIFICATION_XML *nxml) {
+	// Already have an error or already up to date keep it persistent
+	if (nxml->state == NOTIFY_STATE_ERROR || nxml->state == NOTIFY_STATE_NONE)
+		return;
+
+	// No current data have to go from the snapshot
+	if (!nxml->current_session_id ||
+	    !nxml->current_serial) {
+		nxml->state = NOTIFY_STATE_SNAPSHOT;
+		return;
+	}
+
+	if (nxml->session_id && nxml->serial) {
+		// New session available should go from snapshot
+		if(strcmp(nxml->current_session_id, nxml->session_id) != 0) {
+			nxml->state = NOTIFY_STATE_SNAPSHOT;
+			return;
+		}
+		int serial_diff = strcmp(nxml->current_serial, nxml->serial);
+		// We are up to date take no further action
+		if (serial_diff == 0) {
+			nxml->state = NOTIFY_STATE_NONE;
+			return;
+		//current serial is larger! oh oh should probably go from snapshot
+		//TODO check this assumption
+		} else if (serial_diff > 0) {
+			nxml->state = NOTIFY_STATE_SNAPSHOT;
+			return;
+		// current serial is greater lets try deltas
+		} else {
+			if (!STAILQ_EMPTY(&(nxml->delta_q))) {
+				DELTA_ITEM *d;
+				STAILQ_FOREACH(d, &(nxml->delta_q), q) {
+					//TODO this is more strict than it should be
+					if (strcmp(nxml->current_serial, d->serial) == 0) {
+						nxml->state = NOTIFY_STATE_DELTAS;
+						return;
+					}
+				}
+				//current serial is to far out of date. go from snapshot
+				nxml->state = NOTIFY_STATE_SNAPSHOT;
+				return;
+			}
+			// TODO should we have a default here
+		}
+		// TODO should we have a default here
+	}
+	// TODO should we have a default here
+	return;
+}
+
 void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 	printf("scope: %d\n", notification_xml->scope);
+	printf("state: %d\n", notification_xml->state);
 	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
 	printf("version: %s\n", notification_xml->version ?: "NULL");
+	printf("current_session_id: %s\n", notification_xml->current_session_id ?: "NULL");
+	printf("current_serial: %s\n", notification_xml->current_serial ?: "NULL");
 	printf("session_id: %s\n", notification_xml->session_id ?: "NULL");
 	printf("serial: %s\n", notification_xml->serial ?: "NULL");
 	printf("snapshot_uri: %s\n", notification_xml->snapshot_uri ?: "NULL");
@@ -88,6 +142,8 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		      notification_xml->serial)) {
 			err(1, "parse failed - incomplete notification attributes");
 		}
+
+		check_state(notification_xml);
 
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
 		//print_notification_xml(notification_xml);
@@ -129,15 +185,21 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
 			}
 		}
+		//Only add to the list if we are relevant
 		if (delta_uri && delta_hash && delta_serial) {
-			DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
-			if (d) {
-				STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
+			//TODO current use delta check expects current delta in list as well...
+			if (strcmp(notification_xml->current_serial, delta_serial) <= 0) {
+				DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
+				if (d) {
+					STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
+				} else {
+					err(1, "alloc failed - creating delta");
+				}
 			} else {
-				err(1, "alloc failed - creating delta");
+				printf("excluding delta %s %s \n", delta_serial, delta_uri);
 			}
 		} else {
-			err(1, "parse failed - incomplete snapshot attributes");
+			err(1, "parse failed - incomplete delta attributes");
 		}
 		notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
 	} else {
@@ -153,6 +215,8 @@ void notification_elem_end(void *data, const char *el) {
 			err(1, "parse failed - exited notification elem unexpectedely");
 		}
 		notification_xml->scope = NOTIFICATION_SCOPE_END;
+		//check the state to see if we have enough delta info
+		check_state(notification_xml);
 		//print_notification_xml(notification_xml);
 		//printf("end %s\n", el);
 	} else if (strcmp("snapshot", el) == 0) {
@@ -171,11 +235,48 @@ void notification_elem_end(void *data, const char *el) {
 	}
 }
 
-XML_DATA *new_notify_xml_data(OPTS *opts) {
+void save_notify_data(XML_DATA *xml_data) {
+	char *notify_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+	printf("saving %s\n", notify_filename);
+	FILE *f = fopen(notify_filename, "w");
+	if (f) {
+		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
+		//TODO maybe this should actually come from the snapshot/deltas that get written
+		// might not matter if we have verified consistency already
+		fprintf(f, "%s\n%s\n", nxml->session_id, nxml->serial);
+		fclose(f);
+	}
+}
+
+void fetch_existing_notify_data(XML_DATA *xml_data) {
+	char *notify_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+	printf("investigating %s\n", notify_filename);
+	fflush(stdout);
+	char *line = NULL;
+	size_t len = 0;
+	FILE *f = fopen(notify_filename, "r");
+	if (f) {
+		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
+		ssize_t s = getline(&line, &len, f);
+		line[strlen(line)-1] = '\0';
+		nxml->current_session_id = strdup(line);
+		s = getline(&line, &len, f);
+		line[strlen(line)-1] = '\0';
+		nxml->current_serial = line;
+		fclose(f);
+	} else {
+		printf("no file %s found", notify_filename);
+	}
+	free(notify_filename);
+}
+
+XML_DATA *new_notify_xml_data(char *uri, OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
-	xml_data->xml_data = (void*)new_notification_xml(opts);
+	xml_data->xml_data = (void*)new_notification_xml();
+	xml_data->uri = uri;
 	xml_data->opts = opts;
+	fetch_existing_notify_data(xml_data);
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, notification_elem_start, notification_elem_end);
 	XML_SetUserData(xml_data->parser, xml_data);

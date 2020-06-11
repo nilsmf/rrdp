@@ -20,16 +20,16 @@ size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
 	return nmemb;
 }
 
-int fetch_xml_url(char *url, XML_DATA *data) {
-	if (!url) {
+int fetch_xml_uri(XML_DATA *data) {
+	if (!data || !data->uri) {
 		err(1, "missing url");
 	}
 	CURL *curl = curl_easy_init();
 	if (curl) {
-		printf("starting curl: %s\n", url);
+		printf("starting curl: %s\n", data->uri);
 		fflush(stdout);
 		CURLcode res;
-		curl_easy_setopt(curl, CURLOPT_URL, url);
+		curl_easy_setopt(curl, CURLOPT_URL, data->uri);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 		curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
