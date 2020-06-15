@@ -73,6 +73,7 @@ FILE *open_delta_file(const char *publish_uri, const char *basedir) {
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
 	char *filename = generate_filename_from_uri(publish_uri, basedir, NULL);
+	// TODO quick and dirty getting path
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
 	path_delim[0] = '\0';
@@ -95,9 +96,11 @@ int write_delta_publish(XML_DATA *xml_data) {
 	return delta_xml->publish_data_length;
 }
 
-int write_delta_withdraw(DELTA_XML *delta_xml) {
-	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(delta_xml->publish_uri, base_local, NULL);
+int write_delta_withdraw(XML_DATA* xml_data) {
+	//TODO files to remove could be in working or primary. best way to solve?
+	// I think adding the file as empty and then applying in order and then after applying to primary removing empty files should track correctly
+	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
+	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_working, NULL);
 	int ret = unlink(filename);
 	free(filename);
 	return ret;
@@ -185,7 +188,7 @@ void delta_elem_end(void *data, const char *el) {
 			}
 			write_delta_publish(xml_data);
 		} else {
-			write_delta_withdraw(delta_xml);
+			write_delta_withdraw(xml_data);
 		}
 		free(delta_xml->publish_uri);
 		delta_xml->publish_uri = NULL;

@@ -36,14 +36,14 @@ void print_snapshot_xml(SNAPSHOT_XML *snapshot_xml) {
 	printf("serial: %s\n", snapshot_xml->serial ?: "NULL");
 }
 
-FILE *open_snapshot_file(const char *publish_uri) {
+FILE *open_snapshot_file(const char *publish_uri, const char *base_dir) {
 	if (!publish_uri) {
 		err(1, "tried to write to defunct publish uri");
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
-	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(publish_uri, base_local, NULL);
+	char *filename = generate_filename_from_uri(publish_uri, base_dir, NULL);
 
+	// TODO quick and dirty getting path
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
 	path_delim[0] = '\0';
@@ -54,9 +54,10 @@ FILE *open_snapshot_file(const char *publish_uri) {
 	return ret;
 }
 
-int write_snapshot_publish(SNAPSHOT_XML *snapshot_xml) {
+int write_snapshot_publish(XML_DATA *xml_data) {
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
 	FILE *f;
-	if (!(f = open_snapshot_file(snapshot_xml->publish_uri))) {
+	if (!(f = open_snapshot_file(snapshot_xml->publish_uri, xml_data->opts->basedir_working))) {
 		err(1, "file open error");
 	}
 	//TODO decode b64 message
@@ -138,7 +139,7 @@ void snapshot_elem_end(void *data, const char *el) {
 		}
 		//TODO write this data somewhere (and/or never keep this much and stream it straight to staging file?)
 		//printf("publish: '%.*s'\n", snapshot_xml->publish_data ? snapshot_xml->publish_data_length : 4, snapshot_xml->publish_data ?: "NULL");
-		write_snapshot_publish(snapshot_xml);
+		write_snapshot_publish(xml_data);
 		free(snapshot_xml->publish_uri);
 		snapshot_xml->publish_uri = NULL;
 		free(snapshot_xml->publish_data);
