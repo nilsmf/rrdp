@@ -69,11 +69,13 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 				fetch_delta_xml(d->uri, opts);
 				free_delta(d);
 			}
+			//TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
 			//TODO if failed to fetch/apply deltas then fallthrough to snapshot
 			break;
 		case NOTIFY_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
 			fetch_snapshot_xml(nxml->snapshot_uri, opts);
+			apply_basedir_working_snapshot(notify_xml_data);
 		}
 		save_notify_data(notify_xml_data);
 	} else {

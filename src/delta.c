@@ -22,7 +22,7 @@ typedef struct deltaXML {
 	char *xmlns;
 	char *version;
 	char *session_id;
-	char *serial;
+	int serial;
 	char *publish_uri;
 	char *publish_hash;
 	char *publish_data;
@@ -34,7 +34,7 @@ void print_delta_xml(DELTA_XML *delta_xml) {
 	printf("xmlns: %s\n", delta_xml->xmlns ?: "NULL");
 	printf("version: %s\n", delta_xml->version ?: "NULL");
 	printf("session_id: %s\n", delta_xml->session_id ?: "NULL");
-	printf("serial: %s\n", delta_xml->serial ?: "NULL");
+	printf("serial: %d\n", delta_xml->serial);
 }
 
 char *get_hex_hash(FILE *f, char *obuff_hex) {
@@ -59,25 +59,66 @@ char *get_hex_hash(FILE *f, char *obuff_hex) {
 int verify_publish(XML_DATA *xml_data) {
 	DELTA_XML *delta_xml = (DELTA_XML *)xml_data->xml_data;
 	char obuff_hex[SHA256_DIGEST_LENGTH*2];
-	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
-	FILE *f = fopen(filename, "r");
+	char *filename = NULL;
+	FILE *f = NULL;
+	//delta expects file to exist
+	if (delta_xml->publish_hash) {
+		filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
+		printf("validating file: %s...", filename);
+		f = fopen(filename, "r");
+	}
 	if (!get_hex_hash(f, obuff_hex)) {
-		if (f)
+		if (f) {
 			fclose(f);
+			f = NULL;
+		}
+		free(filename);
+		filename = NULL;
 		//verify from working dir if not found in base in case of multiple applied deltas this run
 		filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_working, NULL);
 		f = fopen(filename, "r");
 		if (!get_hex_hash(f, obuff_hex)) {
-			err(1, "publish to override did not exist");
+			//delta expected hash but was not found
+			if (delta_xml->publish_hash) {
+				printf("2 didn't find expected hash for file %s\n", filename);
+				free(filename);
+				if (f)
+					fclose(f);
+				//return 1;
+				fflush(stdout);
+				return 0;
+			}
+		//delta didn't expect hash but was found
+		} else if (!delta_xml->publish_hash) {
+			printf("2 found unexpected hash (%s) for file %s\n", obuff_hex, filename);
+			free(filename);
+			if (f)
+				fclose(f);
+			//return 1;
+			fflush(stdout);
+			err(1, "omg");
+			return 0;
 		}
+
+		free(filename);
 		if (f)
 			fclose(f);
+	} else if (!delta_xml->publish_hash) {
+		//delta didn't expect hash but was found
+		//return 1;
+		printf("1 found unexpected hash (%s) for file %s\n", obuff_hex, filename);
+		free(filename);
+		if (f)
+			fclose(f);
+		return 0;
 	}
-	printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
+	if (delta_xml->publish_hash)
+		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
 
 	//TODO: turn this back on
 	//return !strncmp(obuff_hex, delta->xml_publish_hash, SHA256_DIGEST_LENGTH*2);
-	return 1;
+
+	return 0;
 }
 
 FILE *open_delta_file(const char *publish_uri, const char *basedir) {
@@ -139,7 +180,7 @@ void delta_elem_start(void *data, const char *el, const char **attr) {
 			} else if (strcmp("session_id", attr[i]) == 0) {
 				delta_xml->session_id = strdup(attr[i+1]);
 			} else if (strcmp("serial", attr[i]) == 0) {
-				delta_xml->serial = strdup(attr[i+1]);
+				delta_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
 			} else {
 				err(1, "parse failed - non conforming attribute found in delta elem");
 			}
@@ -200,7 +241,7 @@ void delta_elem_end(void *data, const char *el) {
 		//TODO should we never keep this much and stream it straight to staging file?
 		//printf("publish: '%.*s'\n", delta_xml->publish_data ? delta_xml->publish_data_length : 4, delta_xml->publish_data ?: "NULL");
 		if (strcmp("publish", el) == 0) {
-			if (!verify_publish(xml_data)) {
+			if (verify_publish(xml_data)) {
 				err(1, "failed to verify delta hash");
 			}
 			write_delta_publish(xml_data);

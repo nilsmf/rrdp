@@ -23,11 +23,11 @@ typedef enum notify_state {
 typedef struct delta_item {
 	char *uri;
 	char *hash;
-	char *serial;
+	int serial;
 	STAILQ_ENTRY(delta_item) q;
 } DELTA_ITEM;
 
-DELTA_ITEM *new_delta_item(const char *uri, const char *hash, const char *serial);
+DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial);
 DELTA_ITEM *free_delta(DELTA_ITEM *d);
 
 STAILQ_HEAD(DELTA_Q, delta_item);
@@ -37,9 +37,9 @@ typedef struct notificationXML {
 	char *xmlns;
 	char *version;
 	char *session_id;
-	char *serial;
+	int serial;
 	char *current_session_id;
-	char *current_serial;
+	int current_serial;
 	char *snapshot_uri;
 	char *snapshot_hash;
 	struct DELTA_Q delta_q;

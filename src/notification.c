@@ -7,12 +7,12 @@
 
 #include <src/notification.h>
 
-DELTA_ITEM *new_delta_item(const char *uri, const char *hash, const char *serial) {
+DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial) {
 	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));
 	if (d) {
 		d->uri = strdup(uri);
 		d->hash = strdup(hash);
-		d->serial = strdup(serial);
+		d->serial = serial;
 	}
 	return d;
 }
@@ -20,7 +20,6 @@ DELTA_ITEM *new_delta_item(const char *uri, const char *hash, const char *serial
 DELTA_ITEM *free_delta(DELTA_ITEM *d) {
 	free(d->uri);
 	free(d->hash);
-	free(d->serial);
 	free(d);
 
 	return NULL;
@@ -38,7 +37,6 @@ NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml) {
 		free(nxml->xmlns);
 		free(nxml->version);
 		free(nxml->session_id);
-		free(nxml->serial);
 		free(nxml->snapshot_uri);
 		free(nxml->snapshot_hash);
 		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
@@ -69,29 +67,37 @@ void check_state(NOTIFICATION_XML *nxml) {
 			nxml->state = NOTIFY_STATE_SNAPSHOT;
 			return;
 		}
-		int serial_diff = strcmp(nxml->current_serial, nxml->serial);
+		int serial_diff = nxml->serial - nxml->current_serial;
 		// We are up to date take no further action
 		if (serial_diff == 0) {
 			nxml->state = NOTIFY_STATE_NONE;
 			return;
 		//current serial is larger! oh oh should probably go from snapshot
 		//TODO check this assumption
-		} else if (serial_diff > 0) {
+		} else if (serial_diff < 0) {
 			nxml->state = NOTIFY_STATE_SNAPSHOT;
 			return;
 		// current serial is greater lets try deltas
 		} else {
 			if (!STAILQ_EMPTY(&(nxml->delta_q))) {
 				DELTA_ITEM *d;
+				int serial_counter = 0;
 				STAILQ_FOREACH(d, &(nxml->delta_q), q) {
-					//TODO this is more strict than it should be
-					if (strcmp(nxml->current_serial, d->serial) == 0) {
-						nxml->state = NOTIFY_STATE_DELTAS;
+					//TODO should we allow for out of order serial deltas
+					serial_counter++;
+					if (nxml->current_serial + serial_counter != d->serial) {
+						nxml->state = NOTIFY_STATE_SNAPSHOT;
 						return;
 					}
 				}
-				//current serial is to far out of date. go from snapshot
-				nxml->state = NOTIFY_STATE_SNAPSHOT;
+				if (serial_counter != serial_diff) {
+					printf("Mismatch for serial diff vs. actual in order serials");
+					nxml->state = NOTIFY_STATE_SNAPSHOT;
+					return;
+				}
+				printf("Happy to apply %d deltas", serial_counter);
+				//All serials matched
+				nxml->state = NOTIFY_STATE_DELTAS;
 				return;
 			}
 			// TODO should we have a default here
@@ -108,9 +114,9 @@ void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
 	printf("version: %s\n", notification_xml->version ?: "NULL");
 	printf("current_session_id: %s\n", notification_xml->current_session_id ?: "NULL");
-	printf("current_serial: %s\n", notification_xml->current_serial ?: "NULL");
+	printf("current_serial: %d\n", notification_xml->current_serial);
 	printf("session_id: %s\n", notification_xml->session_id ?: "NULL");
-	printf("serial: %s\n", notification_xml->serial ?: "NULL");
+	printf("serial: %d\n", notification_xml->serial);
 	printf("snapshot_uri: %s\n", notification_xml->snapshot_uri ?: "NULL");
 	printf("snapshot_hash: %s\n", notification_xml->snapshot_hash ?: "NULL");
 }
@@ -131,7 +137,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 			} else if (strcmp("session_id", attr[i]) == 0) {
 				notification_xml->session_id = strdup(attr[i+1]);
 			} else if (strcmp("serial", attr[i]) == 0) {
-				notification_xml->serial = strdup(attr[i+1]);
+				notification_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
 			} else {
 				err(1, "parse failed - non conforming attribute found in notification elem");
 			}
@@ -173,14 +179,14 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		}
 		const char *delta_uri = NULL;
 		const char *delta_hash = NULL;
-		const char *delta_serial = NULL;
+		int delta_serial = 0;
 		for (int i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				delta_uri = attr[i+1];
 			} else if (strcmp("hash", attr[i]) == 0) {
 				delta_hash = attr[i+1];
 			} else if (strcmp("serial", attr[i]) == 0) {
-				delta_serial = attr[i+1];
+				delta_serial = (int)strtol(attr[i+1],NULL,BASE10);
 			} else {
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
 			}
@@ -189,7 +195,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		if (delta_uri && delta_hash && delta_serial) {
 			//TODO current use delta check expects current delta in list as well...
 			if (notification_xml->current_serial &&
-			    strcmp(notification_xml->current_serial, delta_serial) <= 0) {
+			    notification_xml->current_serial < delta_serial) {
 				DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
 				if (d) {
 					STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
@@ -197,7 +203,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 					err(1, "alloc failed - creating delta");
 				}
 			} else {
-				printf("excluding delta %s %s \n", delta_serial, delta_uri);
+				printf("excluding delta %d %s \n", delta_serial, delta_uri);
 			}
 		} else {
 			err(1, "parse failed - incomplete delta attributes");
@@ -244,7 +250,7 @@ void save_notify_data(XML_DATA *xml_data) {
 		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
 		//TODO maybe this should actually come from the snapshot/deltas that get written
 		// might not matter if we have verified consistency already
-		fprintf(f, "%s\n%s\n", nxml->session_id, nxml->serial);
+		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
 		fclose(f);
 	}
 }
@@ -263,7 +269,7 @@ void fetch_existing_notify_data(XML_DATA *xml_data) {
 		nxml->current_session_id = strdup(line);
 		s = getline(&line, &len, f);
 		line[strlen(line)-1] = '\0';
-		nxml->current_serial = line;
+		nxml->current_serial = (int)strtol(line,NULL,BASE10);
 		fclose(f);
 	} else {
 		printf("no file %s found", notify_filename);

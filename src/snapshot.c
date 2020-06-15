@@ -21,7 +21,7 @@ typedef struct snapshotXML {
 	char *xmlns;
 	char *version;
 	char *session_id;
-	char *serial;
+	int serial;
 	char *publish_uri;
 	char *publish_data;
 	unsigned int publish_data_length;
@@ -33,7 +33,7 @@ void print_snapshot_xml(SNAPSHOT_XML *snapshot_xml) {
 	printf("xmlns: %s\n", snapshot_xml->xmlns ?: "NULL");
 	printf("version: %s\n", snapshot_xml->version ?: "NULL");
 	printf("session_id: %s\n", snapshot_xml->session_id ?: "NULL");
-	printf("serial: %s\n", snapshot_xml->serial ?: "NULL");
+	printf("serial: %d\n", snapshot_xml->serial);
 }
 
 FILE *open_snapshot_file(const char *publish_uri, const char *base_dir) {
@@ -66,6 +66,18 @@ int write_snapshot_publish(XML_DATA *xml_data) {
 	return snapshot_xml->publish_data_length;
 }
 
+int apply_basedir_working_snapshot(XML_DATA *xml_data) {
+	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+	char *primary_path = generate_basepath_from_uri(snapshot_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
+	char *working_path = generate_basepath_from_uri(snapshot_xml->publish_uri, xml_data->opts->basedir_working, NULL);
+	if (!(primary_path && working_path) || rename(working_path, primary_path)) {
+		err(1, "Failed to apply snapshot from working dir");
+	}
+	free(primary_path);
+	free(working_path);
+	return 0;
+}
+
 void snapshot_elem_start(void *data, const char *el, const char **attr) {
 	XML_DATA *xml_data = (XML_DATA*)data;
 	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
@@ -82,7 +94,7 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 			} else if (strcmp("session_id", attr[i]) == 0) {
 				snapshot_xml->session_id = strdup(attr[i+1]);
 			} else if (strcmp("serial", attr[i]) == 0) {
-				snapshot_xml->serial = strdup(attr[i+1]);
+				snapshot_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
 			} else {
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
 			}
