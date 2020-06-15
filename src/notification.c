@@ -188,7 +188,8 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		//Only add to the list if we are relevant
 		if (delta_uri && delta_hash && delta_serial) {
 			//TODO current use delta check expects current delta in list as well...
-			if (strcmp(notification_xml->current_serial, delta_serial) <= 0) {
+			if (notification_xml->current_serial &&
+			    strcmp(notification_xml->current_serial, delta_serial) <= 0) {
 				DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
 				if (d) {
 					STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);

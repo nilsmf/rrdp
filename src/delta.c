@@ -6,6 +6,7 @@
 #include <err.h>
 
 #include <expat.h>
+#include <openssl/sha.h>
 
 #include <src/delta.h>
 
@@ -36,13 +37,42 @@ void print_delta_xml(DELTA_XML *delta_xml) {
 	printf("serial: %s\n", delta_xml->serial ?: "NULL");
 }
 
-FILE *open_delta_file(const char *publish_uri) {
+int verify_publish(XML_DATA *xml_data) {
+	DELTA_XML *delta_xml = (DELTA_XML *)xml_data->xml_data;
+	int BUFF_SIZE = 200;
+	char read_buff[BUFF_SIZE];
+	size_t buff_len;
+	unsigned char obuff[SHA256_DIGEST_LENGTH];
+	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
+	FILE *f = fopen(filename, "r");
+	if (f) {
+		SHA256_CTX ctx;
+		SHA256_Init(&ctx);
+		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f))) {
+			SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
+		}
+		SHA256_Final(obuff, &ctx);
+		//buff_len = fread(read_buff, 1, BUFF_SIZE, f);
+		//SHA256((const unsigned char*)read_buff, buff_len, obuff);
+	} else {
+		err(1, "publish to override did not exist");
+	}
+	for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
+		sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
+	printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
+
+	//TODO: turn this back on
+	//return !strncmp(obuff_hex, delta->xml_publish_hash, SHA256_DIGEST_LENGTH*2);
+	return 1;
+}
+
+FILE *open_delta_file(const char *publish_uri, const char *basedir) {
 	if (!publish_uri) {
 		err(1, "tried to write to defunct publish uri");
 	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
-	char *base_local = "/tmp/rrdp/";
-	char *filename = generate_filename_from_uri(publish_uri, base_local, NULL);
+	char *filename = generate_filename_from_uri(publish_uri, basedir, NULL);
 	//create dir if necessary
 	char *path_delim = strrchr(filename, '/');
 	path_delim[0] = '\0';
@@ -53,9 +83,10 @@ FILE *open_delta_file(const char *publish_uri) {
 	return ret;
 }
 
-int write_delta_publish(DELTA_XML *delta_xml) {
+int write_delta_publish(XML_DATA *xml_data) {
+	DELTA_XML *delta_xml = xml_data->xml_data;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri))) {
+	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
 		err(1, "file open error");
 	}
 	//TODO decode b64 message
@@ -146,10 +177,13 @@ void delta_elem_end(void *data, const char *el) {
 		if (!delta_xml->publish_uri) {
 			err(1, "parse failed - no data recovered from publish elem");
 		}
-		//TODO write this data somewhere (and/or never keep this much and stream it straight to staging file?)
+		//TODO should we never keep this much and stream it straight to staging file?
 		//printf("publish: '%.*s'\n", delta_xml->publish_data ? delta_xml->publish_data_length : 4, delta_xml->publish_data ?: "NULL");
 		if (strcmp("publish", el) == 0) {
-			write_delta_publish(delta_xml);
+			if (!verify_publish(xml_data)) {
+				err(1, "failed to verify delta hash");
+			}
+			write_delta_publish(xml_data);
 		} else {
 			write_delta_withdraw(delta_xml);
 		}

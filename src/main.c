@@ -26,7 +26,7 @@
 //
 // nice to have optimise with keep alives etc.
 //
-// - start to check which things need to be updated (serial #)
+// * start to check which things need to be updated (serial #)
 // - start to validate file existance and hash
 // - add 2nd layer of files in case of error
 // - exit early from xml parsing if we know we are ok already?

@@ -5,11 +5,14 @@ CC=gcc
 CC=gcc
 INCLUDES="-I/usr/local/opt/curl/include"
 INCLUDES+=" -I/usr/local/opt/expat/include"
+INCLUDES+=" -I/usr/local/opt/openssl/include"
 INCLUDES+=" -I./"
 LINKS="-L/usr/local/opt/curl/lib"
 LINKS+=" -L/usr/local/opt/expat/lib"
+LINKS+=" -L/usr/local/opt/openssl/lib"
 LINKS2="-lexpat"
 LINKS2+=" -lcurl"
+LINKS2+=" -lcrypto"
 CFLAGS="-Wall"
 CFLAGS+=" -c"
 
