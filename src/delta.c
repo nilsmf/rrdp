@@ -37,29 +37,42 @@ void print_delta_xml(DELTA_XML *delta_xml) {
 	printf("serial: %s\n", delta_xml->serial ?: "NULL");
 }
 
-int verify_publish(XML_DATA *xml_data) {
-	DELTA_XML *delta_xml = (DELTA_XML *)xml_data->xml_data;
+char *get_hex_hash(FILE *f, char *obuff_hex) {
 	int BUFF_SIZE = 200;
 	char read_buff[BUFF_SIZE];
 	size_t buff_len;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	char obuff_hex[SHA256_DIGEST_LENGTH*2];
-	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
-	FILE *f = fopen(filename, "r");
-	if (f) {
+	if (f && obuff_hex) {
 		SHA256_CTX ctx;
 		SHA256_Init(&ctx);
 		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f))) {
 			SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
 		}
 		SHA256_Final(obuff, &ctx);
-		//buff_len = fread(read_buff, 1, BUFF_SIZE, f);
-		//SHA256((const unsigned char*)read_buff, buff_len, obuff);
-	} else {
-		err(1, "publish to override did not exist");
+		for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
+			sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
+		return obuff_hex;
 	}
-	for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
-		sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
+	return NULL;
+}
+
+int verify_publish(XML_DATA *xml_data) {
+	DELTA_XML *delta_xml = (DELTA_XML *)xml_data->xml_data;
+	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
+	FILE *f = fopen(filename, "r");
+	if (!get_hex_hash(f, obuff_hex)) {
+		if (f)
+			fclose(f);
+		//verify from working dir if not found in base in case of multiple applied deltas this run
+		filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_working, NULL);
+		f = fopen(filename, "r");
+		if (!get_hex_hash(f, obuff_hex)) {
+			err(1, "publish to override did not exist");
+		}
+		if (f)
+			fclose(f);
+	}
 	printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
 
 	//TODO: turn this back on
@@ -79,9 +92,9 @@ FILE *open_delta_file(const char *publish_uri, const char *basedir) {
 	path_delim[0] = '\0';
 	mkpath(filename, 0777);
 	path_delim[0] = '/';
-	FILE * ret = fopen(filename, "w");
+	FILE *f = fopen(filename, "w");
 	free(filename);
-	return ret;
+	return f;
 }
 
 int write_delta_publish(XML_DATA *xml_data) {
@@ -93,17 +106,21 @@ int write_delta_publish(XML_DATA *xml_data) {
 	//TODO decode b64 message
 	fprintf(f, "%.*s", delta_xml->publish_data_length,
 		delta_xml->publish_data);
+	fclose(f);
 	return delta_xml->publish_data_length;
 }
 
 int write_delta_withdraw(XML_DATA* xml_data) {
 	//TODO files to remove could be in working or primary. best way to solve?
 	// I think adding the file as empty and then applying in order and then after applying to primary removing empty files should track correctly
+	// or keep list in memory and append or remove as we progress...
 	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
-	char *filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_working, NULL);
-	int ret = unlink(filename);
-	free(filename);
-	return ret;
+	FILE *f;
+	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
+		err(1, "file open error");
+	}
+	fclose(f);
+	return 0;
 }
 
 void delta_elem_start(void *data, const char *el, const char **attr) {
