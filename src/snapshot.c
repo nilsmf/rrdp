@@ -56,26 +56,20 @@ FILE *open_snapshot_file(const char *publish_uri, const char *base_dir) {
 
 int write_snapshot_publish(XML_DATA *xml_data) {
 	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+	unsigned char *data_decoded;
+	int decoded_len = 0;
 	FILE *f;
 	if (!(f = open_snapshot_file(snapshot_xml->publish_uri, xml_data->opts->basedir_working))) {
 		err(1, "file open error");
 	}
-	//TODO decode b64 message
-	fprintf(f, "%.*s", snapshot_xml->publish_data_length,
-		snapshot_xml->publish_data);
-	return snapshot_xml->publish_data_length;
-}
-
-int apply_basedir_working_snapshot(XML_DATA *xml_data) {
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
-	char *primary_path = generate_basepath_from_uri(snapshot_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
-	char *working_path = generate_basepath_from_uri(snapshot_xml->publish_uri, xml_data->opts->basedir_working, NULL);
-	if (!(primary_path && working_path) || rename(working_path, primary_path)) {
-		err(1, "Failed to apply snapshot from working dir");
+	//decode b64 message
+	decoded_len = b64_decode(snapshot_xml->publish_data, snapshot_xml->publish_data_length, &data_decoded);
+	if (decoded_len > 0) {
+		fwrite(data_decoded, 1, decoded_len, f);
+		free(data_decoded);
 	}
-	free(primary_path);
-	free(working_path);
-	return 0;
+	//fprintf(f, "%s", publish_data_decoded);
+	return snapshot_xml->publish_data_length;
 }
 
 void snapshot_elem_start(void *data, const char *el, const char **attr) {
@@ -176,12 +170,15 @@ void snapshot_content_handler(void *data, const char *content, int length)
 		//printf("parse chunk %d\n", length);
 		//append content to publish_data
 		if (snapshot_xml->publish_data) {
-			snapshot_xml->publish_data = realloc(snapshot_xml->publish_data, sizeof(char)*(snapshot_xml->publish_data_length + length));
+			new_length = snapshot_xml->publish_data_length + length;
+			snapshot_xml->publish_data = realloc(snapshot_xml->publish_data, sizeof(char)*(new_length + 1));
 			strncpy(snapshot_xml->publish_data + snapshot_xml->publish_data_length, content, length);
+			snapshot_xml->publish_data[new_length] = '\0';
 		} else {
-			snapshot_xml->publish_data = strndup(content, length);
+			snapshot_xml->publish_data = strndup(content, length + 1);
+			new_length = length;
 		}
-		new_length = strip_non_b64(snapshot_xml->publish_data, snapshot_xml->publish_data_length + length, snapshot_xml->publish_data);
+		//new_length = strip_non_b64(snapshot_xml->publish_data, snapshot_xml->publish_data_length + length, snapshot_xml->publish_data);
 		if (new_length == -1) {
 			err(1, "parse failed - b64 parse error");
 		}
