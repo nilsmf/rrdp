@@ -27,8 +27,13 @@
 // nice to have optimise with keep alives etc.
 //
 // * start to check which things need to be updated (serial #)
-// - start to validate file existance and hash
-// - add 2nd layer of files in case of error
+// * start to validate file existance and hash
+// * add 2nd layer of files in case of error
+// * fix b64 file saving
+// * migrate snapshot from working dir
+// - validate hosts etc stay the same between calls
+// - migrate deltas from working dir
+// - fix file_util.c to not use built calls to system
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
 
@@ -39,11 +44,12 @@ void fetch_delta_xml(char *uri, OPTS *opts) {
 	}
 }
 
-void fetch_snapshot_xml(char *uri ,OPTS *opts) {
+XML_DATA *fetch_snapshot_xml(char *uri ,OPTS *opts) {
 	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(uri, opts);
 	if (fetch_xml_uri(snapshot_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
+	return snapshot_xml_data;
 }
 
 void fetch_notification_xml(char* uri, OPTS *opts) {
@@ -74,8 +80,10 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 			break;
 		case NOTIFY_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
-			fetch_snapshot_xml(nxml->snapshot_uri, opts);
+			XML_DATA *snapshot_xml_data = fetch_snapshot_xml(nxml->snapshot_uri, opts);
 			apply_basedir_working_snapshot(notify_xml_data);
+			//TODO free this
+			//free_snapshot_xml(snapshot_xml_data);
 		}
 		save_notify_data(notify_xml_data);
 	} else {
