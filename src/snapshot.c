@@ -68,7 +68,6 @@ int write_snapshot_publish(XML_DATA *xml_data) {
 		fwrite(data_decoded, 1, decoded_len, f);
 		free(data_decoded);
 	}
-	//fprintf(f, "%s", publish_data_decoded);
 	return snapshot_xml->publish_data_length;
 }
 
@@ -178,12 +177,7 @@ void snapshot_content_handler(void *data, const char *content, int length)
 			snapshot_xml->publish_data = strndup(content, length + 1);
 			new_length = length;
 		}
-		//new_length = strip_non_b64(snapshot_xml->publish_data, snapshot_xml->publish_data_length + length, snapshot_xml->publish_data);
-		if (new_length == -1) {
-			err(1, "parse failed - b64 parse error");
-		}
 		snapshot_xml->publish_data_length = new_length;
-		//printf("publish_data running total (%d) '%.*s'\n", snapshot_xml->publish_data_length, snapshot_xml->publish_data_length, snapshot_xml->publish_data);
 	}
 	else {
 		//printf("chars found '%.*s'\n", length, content);

@@ -140,13 +140,18 @@ FILE *open_delta_file(const char *publish_uri, const char *basedir) {
 
 int write_delta_publish(XML_DATA *xml_data) {
 	DELTA_XML *delta_xml = xml_data->xml_data;
+	unsigned char *data_decoded;
+	int decoded_len = 0;
 	FILE *f;
 	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
 		err(1, "file open error");
 	}
 	//TODO decode b64 message
-	fprintf(f, "%.*s", delta_xml->publish_data_length,
-		delta_xml->publish_data);
+	decoded_len = b64_decode(delta_xml->publish_data, delta_xml->publish_data_length, &data_decoded);
+	if (decoded_len > 0) {
+		fwrite(data_decoded, 1, decoded_len, f);
+		free(data_decoded);
+	}
 	fclose(f);
 	return delta_xml->publish_data_length;
 }
@@ -274,17 +279,15 @@ void delta_content_handler(void *data, const char *content, int length)
 		//printf("parse chunk %d\n", length);
 		//append content to publish_data
 		if (delta_xml->publish_data) {
-			delta_xml->publish_data = realloc(delta_xml->publish_data, sizeof(char)*(delta_xml->publish_data_length + length));
+			new_length = delta_xml->publish_data_length + length;
+			delta_xml->publish_data = realloc(delta_xml->publish_data, sizeof(char)*(new_length + 1));
 			strncpy(delta_xml->publish_data + delta_xml->publish_data_length, content, length);
+			delta_xml->publish_data[new_length] = '\0';
 		} else {
 			delta_xml->publish_data = strndup(content, length);
-		}
-		new_length = strip_non_b64(delta_xml->publish_data, delta_xml->publish_data_length + length, delta_xml->publish_data);
-		if (new_length == -1) {
-			err(1, "parse failed - b64 parse error");
+			new_length = length;
 		}
 		delta_xml->publish_data_length = new_length;
-		//printf("publish_data running total (%d) '%.*s'\n", delta_xml->publish_data_length, delta_xml->publish_data_length, delta_xml->publish_data);
 	}
 	else {
 		//printf("chars found '%.*s'\n", length, content);
