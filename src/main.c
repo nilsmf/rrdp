@@ -21,8 +21,7 @@
 // step 2. fetch delta
 // 	step 2.1 process deltas
 //
-// ? Should I stage changes in some directory and only change them if whole xml passes
-// ? If 1 snapshot fails should we try other snapshots
+// ? If 1 delta fails should we try other snapshots
 //  if parsing a delta fails whole snapshot must fail since we wont be able to update all the bits and pieces... hmmm tends to imply an intermediate dir...
 //
 // nice to have optimise with keep alives etc.
@@ -33,9 +32,9 @@
 // * fix b64 file saving
 // * migrate snapshot from working dir
 // * migrate deltas from working dir
+// * fix file_util.c to not use built calls to system
 // - validate hosts etc stay the same between calls / or only ever use the notify hostname for the folder location
 // - validate hash of snapshot and delta files
-// - fix file_util.c to not use built calls to system
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
 

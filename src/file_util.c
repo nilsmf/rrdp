@@ -27,15 +27,39 @@ int mkpath(char *dir, mode_t mode)
 	return ret;
 }
 
-//TODO replace this with a better one
 int rm_dir(char *dir) {
-	char *command = malloc(sizeof(char)*(strlen(dir) + 9 + 1));
-	int ret = 0;
-	sprintf(command, "rm -rf \"%s\"", dir);
-	ret = system(command);
-	free(command);
-	return ret;
+	FTSENT *node;
+	FTS *tree;
+	char *vals[] = {dir, NULL};
+
+	if (!dir)
+		return 1;
+	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
+	if (!tree)
+		return 1;
+	printf("deleting %s\n", dir);
+
+	while ((node = fts_read(tree))) {
+		//clear "from" directories as leave them
+		if (node->fts_info & FTS_D)
+			continue;
+		// perhaps unlink would be enough for everything but this is more sure
+		if (node->fts_info & FTS_DP) {
+			printf("removing path %s\n", node->fts_path);
+			if(rmdir(node->fts_path)) {
+				printf("failed to delete %s\n", node->fts_path);
+				return 1;
+			}
+			continue;
+		}
+		if(unlink(node->fts_path)) {
+			printf("failed to delete %s\n", node->fts_path);
+			return 1;
+		}
+	}
+	return 0;
 }
+
 
 int mv_delta(char *from, char *to) {
 	int LENGTH = 50;
@@ -57,6 +81,8 @@ int mv_delta(char *from, char *to) {
 	if (!tree)
 		return 1;
 	newpath = malloc(sizeof(char)*LENGTH);
+	if (!newpath)
+		err(1, "malloc");
 	printf("migrating %s -> %s\n", from, to);
 
 	while ((node = fts_read(tree))) {
@@ -64,18 +90,28 @@ int mv_delta(char *from, char *to) {
 		new_len = node->fts_pathlen - from_len + to_len + 1;
 		if (new_len > newpath_len)
 			newpath = realloc(newpath, sizeof(char)*(new_len));
+		if (!newpath)
+			err(1, "realloc");
 		sprintf(newpath, "%s%s", to, node->fts_path + from_len);
 
 		//create dirs in "to" as we discover them
 		if (node->fts_info & FTS_D) {
 			printf("making path %s\n", newpath);
-			mkpath(newpath, 0777);
+			if(mkpath(newpath, 0777)) {
+				printf("failed to delete %s\n", node->fts_path);
+				free(newpath);
+				return 1;
+			}
 			continue;
 		}
 		//clear "from" directories as leave them
 		if (node->fts_info & FTS_DP) {
 			printf("removing path %s\n", node->fts_path);
-			rmdir(node->fts_path);
+			if(rmdir(node->fts_path)) {
+				printf("failed to delete %s\n", node->fts_path);
+				free(newpath);
+				return 1;
+			}
 			continue;
 		}
 		//TODO probably unlink anything we dont want to copy?
@@ -83,12 +119,18 @@ int mv_delta(char *from, char *to) {
 			continue;
 		//zero sized files are delta "withdraws"
 		if (node->fts_statp->st_size == 0) {
-			printf("deleting %s\n", node->fts_path);
-			unlink(node->fts_path);
+			if(unlink(node->fts_path)) {
+				printf("failed to delete %s\n", node->fts_path);
+				free(newpath);
+				return 1;
+			}
 		//otherwise move the file to the new location
 		} else {
-			printf("moving %s\nto    %s\n\n", node->fts_path, newpath);
-			rename(node->fts_path, newpath);
+			if(rename(node->fts_path, newpath)) {
+				printf("failed to move %s to %s \n", node->fts_path, newpath);
+				free(newpath);
+				return 1;
+			}
 		}
 	}
 	free(newpath);
