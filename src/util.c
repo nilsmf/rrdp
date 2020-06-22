@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <err.h>
 #include <errno.h>
@@ -50,24 +51,6 @@ int strip_non_b64(const char * str, int len, char *out) {
 		}
 	}
 	return i - offset;
-}
-
-int mkpath(char *dir, mode_t mode)
-{
-	struct stat sb;
-
-	if (!dir) {
-		errno = EINVAL;
-		return 1;
-	}
-	if (!stat(dir, &sb))
-		return 0;
-
-	char *newdir;
-	mkpath(dirname(newdir = strdup(dir)), mode);
-	int ret = mkdir(newdir, mode);
-	free(newdir);
-	return ret;
 }
 
 //TODO stolen from rpki atm

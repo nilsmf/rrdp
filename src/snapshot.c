@@ -8,6 +8,7 @@
 #include <expat.h>
 
 #include <src/snapshot.h>
+#include <src/file_util.h>
 
 typedef enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
@@ -68,6 +69,7 @@ int write_snapshot_publish(XML_DATA *xml_data) {
 		fwrite(data_decoded, 1, decoded_len, f);
 		free(data_decoded);
 	}
+	fclose(f);
 	return snapshot_xml->publish_data_length;
 }
 

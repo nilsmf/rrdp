@@ -6,6 +6,7 @@
 #include <src/notification.h>
 #include <src/snapshot.h>
 #include <src/delta.h>
+#include <src/file_util.h>
 
 // libxm (l?)
 // ftp/curl
@@ -31,8 +32,9 @@
 // * add 2nd layer of files in case of error
 // * fix b64 file saving
 // * migrate snapshot from working dir
-// - validate hosts etc stay the same between calls
-// - migrate deltas from working dir
+// * migrate deltas from working dir
+// - validate hosts etc stay the same between calls / or only ever use the notify hostname for the folder location
+// - validate hash of snapshot and delta files
 // - fix file_util.c to not use built calls to system
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
@@ -42,25 +44,31 @@ void fetch_delta_xml(char *uri, OPTS *opts) {
 	if (fetch_xml_uri(delta_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
+	//TODO free this
+	//free_snapshot_xml(snapshot_xml_data);
 }
 
-XML_DATA *fetch_snapshot_xml(char *uri ,OPTS *opts) {
+void fetch_snapshot_xml(char *uri ,OPTS *opts) {
 	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(uri, opts);
 	if (fetch_xml_uri(snapshot_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
-	return snapshot_xml_data;
+	//TODO free this
+	//free_snapshot_xml(snapshot_xml_data);
 }
 
 void fetch_notification_xml(char* uri, OPTS *opts) {
-	XML_DATA *notify_xml_data = new_notify_xml_data(uri, opts);
-	if (fetch_xml_uri(notify_xml_data) != 0) {
+	XML_DATA *xml_data = new_notify_xml_data(uri, opts);
+	if (fetch_xml_uri(xml_data) != 0) {
 		err(1, "failed to curl");
 	}
-	NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)notify_xml_data->xml_data;
+	NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
 
 	if (nxml) {
 		print_notification_xml(nxml);
+		char *primary_path = generate_basepath_from_uri(nxml->snapshot_uri, xml_data->opts->basedir_primary, "https://");
+		char *working_path = generate_basepath_from_uri(nxml->snapshot_uri, xml_data->opts->basedir_working, "https://");
+		rm_dir(working_path);
 		switch (nxml->state) {
 		case NOTIFY_STATE_ERROR:
 			err(1, "NOTIFY_STATE_ERROR");
@@ -76,16 +84,22 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 				free_delta(d);
 			}
 			//TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
-			//TODO if failed to fetch/apply deltas then fallthrough to snapshot
-			break;
+			// ie. do a mv_delta after each loop above
+			//if failed to fetch/apply deltas then fallthrough to snapshot
+			if (!mv_delta(working_path, primary_path)) {
+				printf("delta migrate passed\n");
+				break;
+			}
+			rm_dir(working_path);
+			printf("delta move failed going to snapshot\n");
 		case NOTIFY_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
-			XML_DATA *snapshot_xml_data = fetch_snapshot_xml(nxml->snapshot_uri, opts);
-			apply_basedir_working_snapshot(notify_xml_data);
-			//TODO free this
-			//free_snapshot_xml(snapshot_xml_data);
+			fetch_snapshot_xml(nxml->snapshot_uri, opts);
+			rm_dir(primary_path);
+			if (mv_delta(working_path, primary_path))
+				err(1, "failed to update");
 		}
-		save_notify_data(notify_xml_data);
+		save_notify_data(xml_data);
 	} else {
 		err(1, "no notification_xml available");
 	}

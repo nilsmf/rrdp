@@ -47,7 +47,6 @@ typedef struct notificationXML {
 } NOTIFICATION_XML;
 NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml);
 NOTIFICATION_XML *new_notification_xml();
-int apply_basedir_working_snapshot(XML_DATA *xml_data);
 void print_notification_xml(NOTIFICATION_XML *notification_xml);
 
 XML_DATA *new_notify_xml_data(char *uri, OPTS *opts);

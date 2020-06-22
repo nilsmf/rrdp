@@ -6,7 +6,6 @@
 #include <expat.h>
 
 #include <src/notification.h>
-#include <src/file_util.h>
 
 DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial) {
 	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));
@@ -290,23 +289,5 @@ XML_DATA *new_notify_xml_data(char *uri, OPTS *opts) {
 	XML_SetUserData(xml_data->parser, xml_data);
 
 	return xml_data;
-}
-
-int apply_basedir_working_snapshot(XML_DATA *xml_data) {
-	NOTIFICATION_XML *notify_xml = (NOTIFICATION_XML*)xml_data->xml_data;
-	char *primary_path = generate_basepath_from_uri(notify_xml->snapshot_uri, xml_data->opts->basedir_primary, "https://");
-	char *working_path = generate_basepath_from_uri(notify_xml->snapshot_uri, xml_data->opts->basedir_working, "https://");
-	printf("apply snapshot from %s to %s\n", working_path, primary_path);
-	fflush(stdout);
-	if (!primary_path || !working_path) {
-		err(1, "Failed to apply snapshot from working dir");
-	}
-	rm_dir(primary_path);
-	if (mv_dir(working_path, primary_path)) {
-		err(1, "failed to move dirs");
-	}
-	free(primary_path);
-	free(working_path);
-	return 0;
 }
 
