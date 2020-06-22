@@ -33,13 +33,13 @@
 // * migrate snapshot from working dir
 // * migrate deltas from working dir
 // * fix file_util.c to not use built calls to system
+// * validate hash of snapshot and delta files
 // - validate hosts etc stay the same between calls / or only ever use the notify hostname for the folder location
-// - validate hash of snapshot and delta files
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
 
-void fetch_delta_xml(char *uri, OPTS *opts) {
-	XML_DATA *delta_xml_data = new_delta_xml_data(uri, opts);
+void fetch_delta_xml(char *uri, char *hash, OPTS *opts) {
+	XML_DATA *delta_xml_data = new_delta_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(delta_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -47,8 +47,8 @@ void fetch_delta_xml(char *uri, OPTS *opts) {
 	//free_snapshot_xml(snapshot_xml_data);
 }
 
-void fetch_snapshot_xml(char *uri ,OPTS *opts) {
-	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(uri, opts);
+void fetch_snapshot_xml(char *uri, char *hash, OPTS *opts) {
+	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(snapshot_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -79,7 +79,7 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 			while (!STAILQ_EMPTY(&(nxml->delta_q))) {
 				DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
 				STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
-				fetch_delta_xml(d->uri, opts);
+				fetch_delta_xml(d->uri, d->hash, opts);
 				free_delta(d);
 			}
 			//TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
@@ -93,7 +93,7 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 			printf("delta move failed going to snapshot\n");
 		case NOTIFY_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
-			fetch_snapshot_xml(nxml->snapshot_uri, opts);
+			fetch_snapshot_xml(nxml->snapshot_uri, nxml->snapshot_hash, opts);
 			rm_dir(primary_path);
 			if (mv_delta(working_path, primary_path))
 				err(1, "failed to update");

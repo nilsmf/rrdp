@@ -3,12 +3,15 @@
 
 #include <stdio.h>
 #include <expat.h>
+#include <openssl/sha.h>
 
 #include <src/util.h>
 
 typedef struct xmldata {
 	OPTS *opts;
 	char *uri;
+	char *hash;
+	SHA256_CTX ctx;
 	XML_Parser parser;
 	void *xml_data;
 } XML_DATA;

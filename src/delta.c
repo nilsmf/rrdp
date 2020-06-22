@@ -295,12 +295,13 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_delta_xml_data(char *uri, OPTS *opts) {
+XML_DATA *new_delta_xml_data(char *uri, char *hash, OPTS *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));
 	xml_data->uri = uri;
 	xml_data->opts = opts;
+	xml_data->hash = hash;
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);

@@ -283,6 +283,8 @@ XML_DATA *new_notify_xml_data(char *uri, OPTS *opts) {
 	xml_data->xml_data = (void*)new_notification_xml();
 	xml_data->uri = uri;
 	xml_data->opts = opts;
+	//no hash verification for notify file
+	xml_data->hash = NULL;
 	fetch_existing_notify_data(xml_data);
 	xml_data->parser = XML_ParserCreate(NULL);
 	XML_SetElementHandler(xml_data->parser, notification_elem_start, notification_elem_end);
