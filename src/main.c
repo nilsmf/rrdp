@@ -34,7 +34,7 @@
 // * migrate deltas from working dir
 // * fix file_util.c to not use built calls to system
 // * validate hash of snapshot and delta files
-// - validate hosts etc stay the same between calls / or only ever use the notify hostname for the folder location
+// - validate hosts etc stay the same between calls / or only ever use the notification hostname for the folder location
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
 
@@ -57,7 +57,7 @@ void fetch_snapshot_xml(char *uri, char *hash, OPTS *opts) {
 }
 
 void fetch_notification_xml(char* uri, OPTS *opts) {
-	XML_DATA *xml_data = new_notify_xml_data(uri, opts);
+	XML_DATA *xml_data = new_notification_xml_data(uri, opts);
 	if (fetch_xml_uri(xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -69,12 +69,12 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 		char *working_path = generate_basepath_from_uri(nxml->snapshot_uri, xml_data->opts->basedir_working, "https://");
 		rm_dir(working_path);
 		switch (nxml->state) {
-		case NOTIFY_STATE_ERROR:
-			err(1, "NOTIFY_STATE_ERROR");
-		case NOTIFY_STATE_NONE:
+		case NOTIFICATION_STATE_ERROR:
+			err(1, "NOTIFICATION_STATE_ERROR");
+		case NOTIFICATION_STATE_NONE:
 			printf("up to date\n");
 			return;
-		case NOTIFY_STATE_DELTAS:
+		case NOTIFICATION_STATE_DELTAS:
 			printf("fetching deltas\n");
 			while (!STAILQ_EMPTY(&(nxml->delta_q))) {
 				DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
@@ -91,14 +91,14 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 			}
 			rm_dir(working_path);
 			printf("delta move failed going to snapshot\n");
-		case NOTIFY_STATE_SNAPSHOT:
+		case NOTIFICATION_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
 			fetch_snapshot_xml(nxml->snapshot_uri, nxml->snapshot_hash, opts);
 			rm_dir(primary_path);
 			if (mv_delta(working_path, primary_path))
 				err(1, "failed to update");
 		}
-		save_notify_data(xml_data);
+		save_notification_data(xml_data);
 	} else {
 		err(1, "no notification_xml available");
 	}
