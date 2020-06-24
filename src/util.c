@@ -13,6 +13,9 @@
 
 OPTS *newOpt(const char *basedir_primary,
 	     const char *basedir_working) {
+	if (!strcmp(basedir_primary, basedir_working)) {
+		err(1, "working and primary dir are the same");
+	}
 	OPTS *o = malloc(sizeof(OPTS));
 	o->basedir_primary = basedir_primary;
 	o->basedir_working = basedir_working;
@@ -25,32 +28,6 @@ OPTS *getopts(int argc, char **argv) {
 
 void cleanopts(OPTS *o) {
 	free(o);
-}
-
-
-// Truncate non base64 chars
-int strip_non_b64(const char * str, int len, char *out) {
-	char c;
-	int i;
-	int offset = 0;
-	if (!out || !str) {
-		return -1;
-	}
-	for (i = 0; i < len; i++) {
-		c = str[i];
-		if (c == '+' || c == '/' || c == '=' || c == '\0' ||
-		    (c >= '0' && c <= '9') ||
-		    (c >= 'A' && c <= 'Z') ||
-		    (c >= 'a' && c <= 'z')) {
-			out[i - offset] = c;
-			if (c == '\0') {
-				break;
-			}
-		} else {
-			offset++;
-		}
-	}
-	return i - offset;
 }
 
 //TODO stolen from rpki atm
