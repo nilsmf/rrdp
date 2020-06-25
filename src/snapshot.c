@@ -26,26 +26,27 @@
 #include "snapshot.h"
 #include "file_util.h"
 
-typedef enum snapshot_scope {
+enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
 	SNAPSHOT_SCOPE_SNAPSHOT,
 	SNAPSHOT_SCOPE_PUBLISH,
 	SNAPSHOT_SCOPE_END
-} SNAPSHOT_SCOPE;
+};
 
-typedef struct snapshotXML {
-	SNAPSHOT_SCOPE scope;
-	char *xmlns;
-	char *version;
-	char *session_id;
-	int serial;
-	char *publish_uri;
-	char *publish_data;
-	unsigned int publish_data_length;
+struct snapshot_xml {
+	enum snapshot_scope	scope;
+	char			*xmlns;
+	char			*version;
+	char			*session_id;
+	int			serial;
+	char			*publish_uri;
+	char			*publish_data;
+	unsigned int		publish_data_length;
+};
 
-} SNAPSHOT_XML;
-
-void print_snapshot_xml(SNAPSHOT_XML *snapshot_xml) {
+static void
+print_snapshot_xml(struct snapshot_xml *snapshot_xml)
+{
 	printf("scope: %d\n", snapshot_xml->scope);
 	printf("xmlns: %s\n", snapshot_xml->xmlns ?: "NULL");
 	printf("version: %s\n", snapshot_xml->version ?: "NULL");
@@ -53,7 +54,9 @@ void print_snapshot_xml(SNAPSHOT_XML *snapshot_xml) {
 	printf("serial: %d\n", snapshot_xml->serial);
 }
 
-FILE *open_snapshot_file(const char *publish_uri, const char *base_dir) {
+static FILE *
+open_snapshot_file(const char *publish_uri, const char *base_dir)
+{
 	if (!publish_uri) {
 		err(1, "tried to write to defunct publish uri");
 	}
@@ -71,8 +74,10 @@ FILE *open_snapshot_file(const char *publish_uri, const char *base_dir) {
 	return ret;
 }
 
-int write_snapshot_publish(XML_DATA *xml_data) {
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+static int
+write_snapshot_publish(struct xmldata *xml_data)
+{
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	unsigned char *data_decoded;
 	int decoded_len = 0;
 	FILE *f;
@@ -89,9 +94,11 @@ int write_snapshot_publish(XML_DATA *xml_data) {
 	return snapshot_xml->publish_data_length;
 }
 
-void snapshot_elem_start(void *data, const char *el, const char **attr) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+static void
+snapshot_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
@@ -142,9 +149,11 @@ void snapshot_elem_start(void *data, const char *el, const char **attr) {
 	}
 }
 
-void snapshot_elem_end(void *data, const char *el) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+static void
+snapshot_elem_end(void *data, const char *el)
+{
+	struct xmldata *xml_data = data;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
 			err(1, "parse failed - exited snapshot elem unexpectedely");
@@ -174,11 +183,12 @@ void snapshot_elem_end(void *data, const char *el) {
 	}
 }
 
-void snapshot_content_handler(void *data, const char *content, int length)
+static void
+snapshot_content_handler(void *data, const char *content, int length)
 {
 	int new_length;
-	XML_DATA *xml_data = (XML_DATA*)data;
-	SNAPSHOT_XML *snapshot_xml = (SNAPSHOT_XML*)xml_data->xml_data;
+	struct xmldata *xml_data = data;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
 		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
 		if (length == 1 && content[0] == '\n') {
@@ -202,10 +212,12 @@ void snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_snapshot_xml_data(char *uri, char *hash, struct opts *opts) {
-	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
+struct xmldata *
+new_snapshot_xml_data(char *uri, char *hash, struct opts *opts)
+{
+	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
 
-	xml_data->xml_data = calloc(1, sizeof(SNAPSHOT_XML));
+	xml_data->xml_data = calloc(1, sizeof(struct snapshot_xml));
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
