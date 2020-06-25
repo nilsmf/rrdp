@@ -85,42 +85,31 @@ rm_dir(char *dir)
 int
 mv_delta(char *from, char *to)
 {
-	int LENGTH = 50;
 	FTSENT *node;
 	FTS *tree;
 	char *vals[] = {from, NULL};
 	char *newpath;
 	int from_len;
-	int to_len;
-	int new_len;
-	int newpath_len = LENGTH;
 
 	if (!from || !to)
 		return 1;
 	from_len = strlen(from);
-	to_len = strlen(to);
 
 	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
 	if (!tree)
 		return 1;
-	newpath = malloc(sizeof(char)*LENGTH);
-	if (!newpath)
-		err(1, "malloc");
 	printf("migrating %s -> %s\n", from, to);
 
 	while ((node = fts_read(tree))) {
 		//replace "from" with "to"
-		new_len = node->fts_pathlen - from_len + to_len + 1;
-		if (new_len > newpath_len)
-			newpath = realloc(newpath, sizeof(char)*(new_len));
-		if (!newpath)
-			err(1, "realloc");
-		sprintf(newpath, "%s%s", to, node->fts_path + from_len);
+		if (asprintf(&newpath, "%s%s", to, node->fts_path + from_len)
+		    == -1)
+			err(1, "asprintf");
 
 		//create dirs in "to" as we discover them
 		if (node->fts_info & FTS_D) {
 			printf("making path %s\n", newpath);
-			if(mkpath(newpath, 0777)) {
+			if (mkpath(newpath, 0777)) {
 				printf("failed to delete %s\n", node->fts_path);
 				free(newpath);
 				return 1;
@@ -130,7 +119,7 @@ mv_delta(char *from, char *to)
 		//clear "from" directories as leave them
 		if (node->fts_info & FTS_DP) {
 			printf("removing path %s\n", node->fts_path);
-			if(rmdir(node->fts_path)) {
+			if (rmdir(node->fts_path)) {
 				printf("failed to delete %s\n", node->fts_path);
 				free(newpath);
 				return 1;
@@ -155,8 +144,8 @@ mv_delta(char *from, char *to)
 				return 1;
 			}
 		}
+		free(newpath);
 	}
-	free(newpath);
 	return 0;
 }
 
