@@ -311,7 +311,7 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_delta_xml_data(char *uri, char *hash, OPTS *opts) {
+XML_DATA *new_delta_xml_data(char *uri, char *hash, struct opts *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));

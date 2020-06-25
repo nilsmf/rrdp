@@ -65,5 +65,5 @@ NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml);
 NOTIFICATION_XML *new_notification_xml(void);
 void print_notification_xml(NOTIFICATION_XML *notification_xml);
 
-XML_DATA *new_notification_xml_data(char *uri, OPTS *opts);
+XML_DATA *new_notification_xml_data(char *uri, struct opts *opts);
 void save_notification_data(XML_DATA *xml_data);

@@ -28,7 +28,7 @@
 
 #include "util.h"
 
-OPTS *newOpt(const char *basedir_primary,
+struct opts *newOpt(const char *basedir_primary,
 	     const char *basedir_working) {
 	if (!(basedir_primary || basedir_working)) {
 		printf("basedir not set\n");
@@ -38,13 +38,13 @@ OPTS *newOpt(const char *basedir_primary,
 		printf("working and primary directories are the same\n");
 		return NULL;
 	}
-	OPTS *o = malloc(sizeof(OPTS));
+	struct opts *o = malloc(sizeof(struct opts));
 	o->basedir_primary = basedir_primary;
 	o->basedir_working = basedir_working;
 	return o;
 }
 
-OPTS *buildopts(int argc, char **argv) {
+struct opts *buildopts(int argc, char **argv) {
 	int opt;
 	char *primary = NULL;
 	char *working = NULL;
@@ -66,7 +66,7 @@ OPTS *buildopts(int argc, char **argv) {
 	return newOpt(primary, working);
 }
 
-void cleanopts(OPTS *o) {
+void cleanopts(struct opts *o) {
 	free(o);
 }
 

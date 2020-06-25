@@ -19,17 +19,18 @@
 
 #define BASE10 10
 
-typedef struct Opts {
+struct opts {
 	const char *basedir_primary;
 	const char *basedir_working;
-} OPTS;
-OPTS *buildopts(int argc, char **argv);
-void cleanopts(OPTS *o);
+};
 
-int b64_decode(char *src, unsigned char **b64);
+struct opts	*buildopts(int, char **);
+void		 cleanopts(struct opts *);
 
-char *generate_basepath_from_uri(const char *uri, const char *base_path, const char *proto);
-char *generate_filename_from_uri(const char *uri, const char *base_path, const char *proto);
+int	b64_decode(char *, unsigned char **);
+
+char	*generate_basepath_from_uri(const char *, const char *, const char *);
+char	*generate_filename_from_uri(const char *, const char *, const char *);
 
 #endif
 

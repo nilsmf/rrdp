@@ -293,7 +293,7 @@ void fetch_existing_notification_data(XML_DATA *xml_data) {
 	free(notification_filename);
 }
 
-XML_DATA *new_notification_xml_data(char *uri, OPTS *opts) {
+XML_DATA *new_notification_xml_data(char *uri, struct opts *opts) {
 	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
 
 	xml_data->xml_data = (void*)new_notification_xml();

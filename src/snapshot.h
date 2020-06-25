@@ -17,4 +17,4 @@
 #include "fetch_util.h"
 #include "util.h"
 
-XML_DATA *new_snapshot_xml_data(char *uri, char *hash, OPTS *opts);
+XML_DATA *new_snapshot_xml_data(char *uri, char *hash, struct opts *opts);

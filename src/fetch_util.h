@@ -24,7 +24,7 @@
 #include "util.h"
 
 typedef struct xmldata {
-	OPTS *opts;
+	struct opts *opts;
 	char *uri;
 	char *hash;
 	SHA256_CTX ctx;
