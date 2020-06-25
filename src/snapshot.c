@@ -204,12 +204,11 @@ snapshot_content_handler(void *data, const char *content, int length)
 			strncpy(snapshot_xml->publish_data + snapshot_xml->publish_data_length, content, length);
 			snapshot_xml->publish_data[new_length] = '\0';
 		} else {
-			snapshot_xml->publish_data = strndup(content, length + 1);
+			snapshot_xml->publish_data = strndup(content, length);
 			new_length = length;
 		}
 		snapshot_xml->publish_data_length = new_length;
-	}
-	else {
+	} else {
 		//printf("chars found '%.*s'\n", length, content);
 	}
 }
