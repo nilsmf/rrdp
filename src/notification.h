@@ -62,7 +62,7 @@ typedef struct notificationXML {
 	NOTIFICATION_STATE state;
 } NOTIFICATION_XML;
 NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml);
-NOTIFICATION_XML *new_notification_xml();
+NOTIFICATION_XML *new_notification_xml(void);
 void print_notification_xml(NOTIFICATION_XML *notification_xml);
 
 XML_DATA *new_notification_xml_data(char *uri, OPTS *opts);
