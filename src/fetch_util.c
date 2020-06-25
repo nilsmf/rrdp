@@ -23,8 +23,10 @@
 
 #define USER_AGENT "rrdp-client v0.1"
 
-size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
-	XML_DATA *xml_data = (XML_DATA*)userdata;
+static size_t
+write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+	struct xmldata *xml_data = userdata;
 	XML_Parser p = xml_data->parser;
 	if (xml_data->hash) {
 		SHA256_Update(&xml_data->ctx, (const u_int8_t *)ptr, nmemb);
@@ -41,7 +43,9 @@ size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
 	return nmemb;
 }
 
-int fetch_xml_uri(XML_DATA *data) {
+int
+fetch_xml_uri(struct xmldata *data)
+{
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	char obuff_hex[SHA256_DIGEST_LENGTH*2];
 	if (!data || !data->uri) {
@@ -82,7 +86,9 @@ int fetch_xml_uri(XML_DATA *data) {
 	}
 }
 
-void fetch_file(char *filename, FILE* stream_in) {
+void
+fetch_file(char *filename, FILE* stream_in)
+{
 	FILE *f;
 	if (!filename) {
 		err(1, "missing filename");
