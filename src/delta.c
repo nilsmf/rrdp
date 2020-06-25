@@ -27,26 +27,28 @@
 #include "delta.h"
 #include "file_util.h"
 
-typedef enum delta_scope {
+enum delta_scope {
 	DELTA_SCOPE_NONE,
 	DELTA_SCOPE_DELTA,
 	DELTA_SCOPE_PUBLISH,
 	DELTA_SCOPE_END
-} DELTA_SCOPE;
+};
 
-typedef struct deltaXML {
-	DELTA_SCOPE scope;
-	char *xmlns;
-	char *version;
-	char *session_id;
-	int serial;
-	char *publish_uri;
-	char *publish_hash;
-	char *publish_data;
-	unsigned int publish_data_length;
-} DELTA_XML;
+struct delta_xml {
+	enum delta_scope	scope;
+	char			*xmlns;
+	char			*version;
+	char			*session_id;
+	int			serial;
+	char			*publish_uri;
+	char			*publish_hash;
+	char			*publish_data;
+	unsigned int		publish_data_length;
+};
 
-void print_delta_xml(DELTA_XML *delta_xml) {
+static void
+print_delta_xml(struct delta_xml *delta_xml)
+{
 	printf("scope: %d\n", delta_xml->scope);
 	printf("xmlns: %s\n", delta_xml->xmlns ?: "NULL");
 	printf("version: %s\n", delta_xml->version ?: "NULL");
@@ -54,7 +56,9 @@ void print_delta_xml(DELTA_XML *delta_xml) {
 	printf("serial: %d\n", delta_xml->serial);
 }
 
-char *get_hex_hash(FILE *f, char *obuff_hex) {
+static char *
+get_hex_hash(FILE *f, char *obuff_hex)
+{
 	int BUFF_SIZE = 200;
 	char read_buff[BUFF_SIZE];
 	size_t buff_len;
@@ -73,8 +77,10 @@ char *get_hex_hash(FILE *f, char *obuff_hex) {
 	return NULL;
 }
 
-int verify_publish(XML_DATA *xml_data) {
-	DELTA_XML *delta_xml = (DELTA_XML *)xml_data->xml_data;
+static int
+verify_publish(struct xmldata *xml_data)
+{
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	char obuff_hex[SHA256_DIGEST_LENGTH*2];
 	char *filename = NULL;
 	FILE *f = NULL;
@@ -138,7 +144,9 @@ int verify_publish(XML_DATA *xml_data) {
 	return 0;
 }
 
-FILE *open_delta_file(const char *publish_uri, const char *basedir) {
+static FILE *
+open_delta_file(const char *publish_uri, const char *basedir)
+{
 	if (!publish_uri) {
 		err(1, "tried to write to defunct publish uri");
 	}
@@ -155,8 +163,10 @@ FILE *open_delta_file(const char *publish_uri, const char *basedir) {
 	return f;
 }
 
-int write_delta_publish(XML_DATA *xml_data) {
-	DELTA_XML *delta_xml = xml_data->xml_data;
+static int
+write_delta_publish(struct xmldata *xml_data)
+{
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	unsigned char *data_decoded;
 	int decoded_len = 0;
 	FILE *f;
@@ -173,11 +183,13 @@ int write_delta_publish(XML_DATA *xml_data) {
 	return delta_xml->publish_data_length;
 }
 
-int write_delta_withdraw(XML_DATA* xml_data) {
+static int
+write_delta_withdraw(struct xmldata* xml_data)
+{
 	//TODO files to remove could be in working or primary. best way to solve?
 	// I think adding the file as empty and then applying in order and then after applying to primary removing empty files should track correctly
 	// or keep list in memory and append or remove as we progress...
-	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	FILE *f;
 	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
 		err(1, "file open error");
@@ -186,9 +198,11 @@ int write_delta_withdraw(XML_DATA* xml_data) {
 	return 0;
 }
 
-void delta_elem_start(void *data, const char *el, const char **attr) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
+static void
+delta_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_NONE) {
@@ -241,9 +255,11 @@ void delta_elem_start(void *data, const char *el, const char **attr) {
 	}
 }
 
-void delta_elem_end(void *data, const char *el) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
+static void
+delta_elem_end(void *data, const char *el)
+{
+	struct xmldata *xml_data = data;
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_DELTA) {
 			err(1, "parse failed - exited delta elem unexpectedely");
@@ -283,11 +299,12 @@ void delta_elem_end(void *data, const char *el) {
 	}
 }
 
-void delta_content_handler(void *data, const char *content, int length)
+static void
+delta_content_handler(void *data, const char *content, int length)
 {
 	int new_length;
-	XML_DATA *xml_data = (XML_DATA*)data;
-	DELTA_XML *delta_xml = (DELTA_XML*)xml_data->xml_data;
+	struct xmldata *xml_data = data;
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	if (delta_xml->scope == DELTA_SCOPE_PUBLISH) {
 		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
 		if (length == 1 && content[0] == '\n') {
@@ -311,10 +328,12 @@ void delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-XML_DATA *new_delta_xml_data(char *uri, char *hash, struct opts *opts) {
-	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
+struct xmldata *
+new_delta_xml_data(char *uri, char *hash, struct opts *opts)
+{
+	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
 
-	xml_data->xml_data = calloc(1, sizeof(DELTA_XML));
+	xml_data->xml_data = calloc(1, sizeof(struct delta_xml));
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;

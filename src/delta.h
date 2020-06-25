@@ -14,9 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <stdio.h>
-
 #include "fetch_util.h"
 #include "util.h"
 
-XML_DATA *new_delta_xml_data(char *uri, char *hash, struct opts *opts);
+struct xmldata	*new_delta_xml_data(char *, char *, struct opts *);
