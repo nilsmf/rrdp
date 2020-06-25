@@ -48,6 +48,8 @@ fetch_xml_uri(struct xmldata *data)
 {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	int n;
+
 	if (!data || !data->uri) {
 		err(1, "missing url");
 	}
@@ -72,7 +74,7 @@ fetch_xml_uri(struct xmldata *data)
 		curl_easy_cleanup(curl);
 		if (data->hash) {
 			SHA256_Final(obuff, &data->ctx);
-			for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
+			for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
 				sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
 			if(strncmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
 				printf("hash '%.*s'\nvs   '%.*s'\n", SHA256_DIGEST_LENGTH*2, data->hash, SHA256_DIGEST_LENGTH*2, obuff_hex);

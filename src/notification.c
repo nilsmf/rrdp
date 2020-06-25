@@ -148,12 +148,14 @@ notification_elem_start(void *data, const char *el, const char **attr)
 {
 	struct xmldata *xml_data = data;
 	struct notification_xml *notification_xml = xml_data->xml_data;
+	int i;
+
 	// Can only enter here once as we should have no ways to get back to START scope
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
 			err(1, "parse failed - entered notification elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0) {
 				notification_xml->xmlns = strdup(attr[i+1]);
 			} else if (strcmp("version", attr[i]) == 0) {
@@ -183,7 +185,7 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
 			err(1, "parse failed - entered snapshot elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				notification_xml->snapshot_uri = strdup(attr[i+1]);
 			} else if (strcmp("hash", attr[i]) == 0) {
@@ -204,7 +206,7 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		const char *delta_uri = NULL;
 		const char *delta_hash = NULL;
 		int delta_serial = 0;
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				delta_uri = attr[i+1];
 			} else if (strcmp("hash", attr[i]) == 0) {

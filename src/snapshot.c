@@ -99,12 +99,14 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 {
 	struct xmldata *xml_data = data;
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+	int i;
+
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
 			err(1, "parse failed - entered snapshot elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0) {
 				snapshot_xml->xmlns = strdup(attr[i+1]);
 			} else if (strcmp("version", attr[i]) == 0) {
@@ -132,7 +134,7 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
 			err(1, "parse failed - entered publish elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				snapshot_xml->publish_uri = strdup(attr[i+1]);
 			} else if (strcmp("xmlns", attr[i]) == 0) {

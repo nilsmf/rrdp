@@ -60,6 +60,7 @@ static char *
 get_hex_hash(FILE *f, char *obuff_hex)
 {
 	int BUFF_SIZE = 200;
+	int n;
 	char read_buff[BUFF_SIZE];
 	size_t buff_len;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
@@ -70,7 +71,7 @@ get_hex_hash(FILE *f, char *obuff_hex)
 			SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
 		}
 		SHA256_Final(obuff, &ctx);
-		for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
+		for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
 			sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
 		return obuff_hex;
 	}
@@ -203,12 +204,14 @@ delta_elem_start(void *data, const char *el, const char **attr)
 {
 	struct xmldata *xml_data = data;
 	struct delta_xml *delta_xml = xml_data->xml_data;
+	int i;
+
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_NONE) {
 			err(1, "parse failed - entered delta elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0) {
 				delta_xml->xmlns = strdup(attr[i+1]);
 			} else if (strcmp("version", attr[i]) == 0) {
@@ -236,7 +239,7 @@ delta_elem_start(void *data, const char *el, const char **attr)
 		if (delta_xml->scope != DELTA_SCOPE_DELTA) {
 			err(1, "parse failed - entered publish elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				delta_xml->publish_uri = strdup(attr[i+1]);
 			} else if (strcmp("hash", attr[i]) == 0) {
