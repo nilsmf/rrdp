@@ -63,8 +63,10 @@
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
 
-void fetch_delta_xml(char *uri, char *hash, struct opts *opts) {
-	XML_DATA *delta_xml_data = new_delta_xml_data(uri, hash, opts);
+static void
+fetch_delta_xml(char *uri, char *hash, struct opts *opts)
+{
+	struct xmldata *delta_xml_data = new_delta_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(delta_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -72,8 +74,10 @@ void fetch_delta_xml(char *uri, char *hash, struct opts *opts) {
 	//free_snapshot_xml(snapshot_xml_data);
 }
 
-void fetch_snapshot_xml(char *uri, char *hash, struct opts *opts) {
-	XML_DATA *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
+static void
+fetch_snapshot_xml(char *uri, char *hash, struct opts *opts)
+{
+	struct xmldata *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(snapshot_xml_data) != 0) {
 		err(1, "failed to curl");
 	}
@@ -81,12 +85,14 @@ void fetch_snapshot_xml(char *uri, char *hash, struct opts *opts) {
 	//free_snapshot_xml(snapshot_xml_data);
 }
 
-void fetch_notification_xml(char* uri, struct opts *opts) {
-	XML_DATA *xml_data = new_notification_xml_data(uri, opts);
+static void
+fetch_notification_xml(char* uri, struct opts *opts)
+{
+	struct xmldata *xml_data = new_notification_xml_data(uri, opts);
 	if (fetch_xml_uri(xml_data) != 0) {
 		err(1, "failed to curl");
 	}
-	NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
+	struct notification_xml *nxml = xml_data->xml_data;
 
 	if (nxml) {
 		print_notification_xml(nxml);
@@ -129,7 +135,9 @@ void fetch_notification_xml(char* uri, struct opts *opts) {
 	}
 }
 
-int main(int argc, char **argv) {
+int
+main(int argc, char **argv)
+{
 	struct opts *opts;
 
 	char *args[] = {argv[0], "-p", "/tmp/rrdp", "-w", "/tmp/rrdp_working"};
