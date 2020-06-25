@@ -44,7 +44,6 @@ free_delta(struct delta_item *d) {
 
 struct notification_xml *new_notification_xml() {
 	struct notification_xml *nxml = calloc(1, sizeof(struct notification_xml));
-//	nxml->delta_q = TAILQ_HEAD_INITIALIZER(nxml->delta_q);
 	TAILQ_INIT(&(nxml->delta_q));
 	return nxml;
 }
@@ -270,14 +269,21 @@ notification_elem_end(void *data, const char *el)
 	}
 }
 
+/* XXXCJ this needs more cleanup and error checking */
 void
 save_notification_data(struct xmldata *xml_data)
 {
-	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+	char *notification_filename;
+
+	if (asprintf(&notification_filename, "%s/.state",
+	    xml_data->opts->basedir_primary) == -1)
+		err(1, "%s", __func__);
+
 	printf("saving %s\n", notification_filename);
+
 	FILE *f = fopen(notification_filename, "w");
 	if (f) {
-		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
+		struct notification_xml *nxml = xml_data->xml_data;
 		//TODO maybe this should actually come from the snapshot/deltas that get written
 		// might not matter if we have verified consistency already
 		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
@@ -285,23 +291,40 @@ save_notification_data(struct xmldata *xml_data)
 	}
 }
 
+/* XXXCJ dito */
 static void
 fetch_existing_notification_data(struct xmldata *xml_data)
 {
-	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+	char *notification_filename;
+
+	if (asprintf(&notification_filename, "%s/.state",
+	    xml_data->opts->basedir_primary) == -1)
+		err(1, "%s", __func__);
+
 	printf("investigating %s\n", notification_filename);
 	fflush(stdout);
 	char *line = NULL;
 	size_t len = 0;
 	FILE *f = fopen(notification_filename, "r");
 	if (f) {
-		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
-		ssize_t s = getline(&line, &len, f);
-		line[strlen(line)-1] = '\0';
-		nxml->current_session_id = strdup(line);
-		s = getline(&line, &len, f);
-		line[strlen(line)-1] = '\0';
-		nxml->current_serial = (int)strtol(line,NULL,BASE10);
+		struct notification_xml *nxml = xml_data->xml_data;
+		ssize_t s;
+		int l = 0;
+
+		while (l < 2 && (s = getline(&line, &len, f)) != -1) {
+			if (s < 1) {
+				printf("bad notification file\n");
+				break;
+			}
+			line[s - 1] = '\0';
+			if (l == 0) {
+				nxml->current_session_id = strdup(line);
+			} else if (l == 1) {
+				/* XXXCJ use strtonum here and maybe 64bit int */
+				nxml->current_serial = (int)strtol(line,NULL,BASE10);
+			}
+			l++;
+		}
 		fclose(f);
 	} else {
 		printf("no file %s found", notification_filename);

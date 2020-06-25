@@ -27,14 +27,14 @@ enum notification_scope {
 	NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT,
 	NOTIFICATION_SCOPE_DELTA,
 	NOTIFICATION_SCOPE_END
-} NOTIFICATION_SCOPE;
+};
 
-typedef enum notification_state {
+enum notification_state {
 	NOTIFICATION_STATE_SNAPSHOT,
 	NOTIFICATION_STATE_DELTAS,
 	NOTIFICATION_STATE_NONE,
 	NOTIFICATION_STATE_ERROR
-} NOTIFICATION_STATE;
+};
 
 struct delta_item {
 	char *uri;
@@ -48,7 +48,7 @@ TAILQ_HEAD(delta_q, delta_item);
 struct delta_item	*new_delta(const char *, const char *, int);
 void			free_delta(struct delta_item *);
 
-typedef struct notification_xml {
+struct notification_xml {
 	enum notification_scope	scope;
 	char			*xmlns;
 	char			*version;
@@ -60,7 +60,7 @@ typedef struct notification_xml {
 	char			*snapshot_hash;
 	struct delta_q		delta_q;
 	enum notification_state	state;
-} NOTIFICATION_XML;
+};
 
 struct notification_xml	*new_notification_xml(void);
 void			free_notification_xml(struct notification_xml *);
