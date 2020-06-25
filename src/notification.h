@@ -17,8 +17,8 @@
 #include <stdio.h>
 #include <sys/queue.h>
 
-#include <src/util.h>
-#include <src/fetch_util.h>
+#include "util.h"
+#include "fetch_util.h"
 
 typedef enum notification_scope {
 	NOTIFICATION_SCOPE_START,

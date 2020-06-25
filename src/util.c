@@ -26,7 +26,7 @@
 #include <sys/stat.h>
 #include <libgen.h>
 
-#include <src/util.h>
+#include "util.h"
 
 OPTS *newOpt(const char *basedir_primary,
 	     const char *basedir_working) {

@@ -24,8 +24,8 @@
 #include <expat.h>
 #include <openssl/sha.h>
 
-#include <src/delta.h>
-#include <src/file_util.h>
+#include "delta.h"
+#include "file_util.h"
 
 typedef enum delta_scope {
 	DELTA_SCOPE_NONE,

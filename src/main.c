@@ -19,10 +19,10 @@
 #include <unistd.h>
 #include <err.h>
 
-#include <src/notification.h>
-#include <src/snapshot.h>
-#include <src/delta.h>
-#include <src/file_util.h>
+#include "notification.h"
+#include "snapshot.h"
+#include "delta.h"
+#include "file_util.h"
 
 // libxm (l?)
 // ftp/curl

@@ -21,7 +21,7 @@
 
 #include <expat.h>
 
-#include <src/notification.h>
+#include "notification.h"
 
 DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial) {
 	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));

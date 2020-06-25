@@ -19,7 +19,7 @@
 #include <string.h>
 #include <curl/curl.h>
 
-#include <src/fetch_util.h>
+#include "fetch_util.h"
 
 #define USER_AGENT "rrdp-client v0.1"
 

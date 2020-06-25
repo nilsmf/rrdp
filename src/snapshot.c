@@ -23,8 +23,8 @@
 
 #include <expat.h>
 
-#include <src/snapshot.h>
-#include <src/file_util.h>
+#include "snapshot.h"
+#include "file_util.h"
 
 typedef enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,

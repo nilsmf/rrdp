@@ -21,7 +21,7 @@
 #include <expat.h>
 #include <openssl/sha.h>
 
-#include <src/util.h>
+#include "util.h"
 
 typedef struct xmldata {
 	OPTS *opts;
