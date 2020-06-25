@@ -18,3 +18,4 @@
 #include "util.h"
 
 struct xmldata	*new_delta_xml_data(char *, char *, struct opts *);
+

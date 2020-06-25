@@ -256,3 +256,4 @@ generate_filename_from_uri(const char *uri, const char *base_path,
 
 	return filename;
 }
+
