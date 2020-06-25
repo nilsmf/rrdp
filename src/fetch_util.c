@@ -47,7 +47,7 @@ int
 fetch_xml_uri(struct xmldata *data)
 {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	int n;
 
 	if (!data || !data->uri) {

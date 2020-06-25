@@ -82,7 +82,7 @@ static int
 verify_publish(struct xmldata *xml_data)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
-	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	char *filename = NULL;
 	FILE *f = NULL;
 	//delta expects file to exist
