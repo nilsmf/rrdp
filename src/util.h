@@ -20,17 +20,18 @@
 #define BASE10 10
 
 struct opts {
-	const char *basedir_primary;
-	const char *basedir_working;
+	char *basedir_primary;
+	char *basedir_working;
 };
 
-struct opts	*buildopts(int, char **);
+struct opts	*newOpt(char *, char *);
 void		 cleanopts(struct opts *);
 
 int	b64_decode(char *, unsigned char **);
 
 char	*generate_basepath_from_uri(const char *, const char *, const char *);
 char	*generate_filename_from_uri(const char *, const char *, const char *);
+char	*make_workdir(const char *);
 
 #endif
 

@@ -30,8 +30,8 @@
 
 #include "util.h"
 
-static struct opts *
-newOpt(const char *basedir_primary, const char *basedir_working)
+struct opts *
+newOpt(char *basedir_primary, char *basedir_working)
 {
 	if (!(basedir_primary || basedir_working)) {
 		printf("basedir not set\n");
@@ -47,33 +47,11 @@ newOpt(const char *basedir_primary, const char *basedir_working)
 	return o;
 }
 
-struct opts *
-buildopts(int argc, char **argv)
-{
-	int opt;
-	char *primary = NULL;
-	char *working = NULL;
-	while ((opt = getopt(argc, argv, ":p:w:")) != -1) {
-		switch(opt) {
-		case 'p':
-			primary = optarg;
-			break;
-		case 'w':
-			working = optarg;
-			break;
-		case ':':
-			printf("missing argument\n");
-			return NULL;
-		case '?':
-			printf("unknown option: %c\n", optopt);
-		}
-	}
-	return newOpt(primary, working);
-}
-
 void
 cleanopts(struct opts *o)
 {
+	free(o->basedir_primary);
+	free(o->basedir_working);
 	free(o);
 }
 
@@ -100,7 +78,8 @@ int b64_decode(char *src, unsigned char **b64) {
 	if ((b64sz = b64_pton(src, *b64, sz)) < 0) {
 		free(*b64);
 		*b64 = NULL;
-		printf("failed to b64 decode");
+		printf("failed to b64 decode\n");
+		printf("%s\n", src);
 		return -1;
 	}
 	return b64sz;
@@ -227,7 +206,7 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 		err(1, "parse uri elem fail");
 	}
 
-	if (asprintf(&filename, "%s/%.*s/", base_path,
+	if (asprintf(&filename, "%s/%.*s", base_path,
 	    (int)hostsz, host) == -1)
 		err(1, "asprintf");
 
@@ -240,24 +219,33 @@ generate_filename_from_uri(const char *uri, const char *base_path,
 {
 	const char *path;
 	size_t pathsz;
-	const char *host;
-	size_t hostsz;
 	char *filename;
 
 	if (!uri || !base_path) {
 		err(1, "tried to write to defunct publish uri");
 	}
-	if (rsync_uri_parse(&host, &hostsz,
+	if (rsync_uri_parse(NULL, NULL,
 			    NULL, NULL,
 			    &path, &pathsz,
 			    NULL, uri, proto) == 0) {
 		err(1, "parse uri elem fail");
 	}
 
-	if (asprintf(&filename, "%s/%.*s/%.*s", base_path,
-	    (int)hostsz, host, (int)pathsz, path) == -1)
+	if (asprintf(&filename, "%s/%.*s", base_path,
+	    (int)pathsz, path) == -1)
 		err(1, "asprintf");
 
 	return filename;
 }
 
+char *
+make_workdir(const char *basedir)
+{
+	char *tmpl;
+
+	if (asprintf(&tmpl, "%s.XXXXXXXX", basedir) == -1)
+		err(1, "%s", __func__);
+	if (mkdtemp(tmpl) == NULL)
+		err(1, "mkdtemp");
+	return tmpl;
+}
