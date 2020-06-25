@@ -24,7 +24,7 @@
 #include "notification.h"
 
 struct delta_item *
-new_delta_item(const char *uri, const char *hash, int serial)
+new_delta(const char *uri, const char *hash, int serial)
 {
 	struct delta_item *d = calloc(1, sizeof(struct delta_item));
 	if (d) {
@@ -222,7 +222,7 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			//TODO current use delta check expects current delta in list as well...
 			if (notification_xml->current_serial &&
 			    notification_xml->current_serial < delta_serial) {
-				struct delta_item *d = new_delta_item(delta_uri, delta_hash, delta_serial);
+				struct delta_item *d = new_delta(delta_uri, delta_hash, delta_serial);
 				if (d) {
 					TAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
 				} else {

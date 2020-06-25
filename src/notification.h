@@ -45,8 +45,7 @@ struct delta_item {
 
 TAILQ_HEAD(delta_q, delta_item);
 
-/* XXXCJ rename to new_delta ?? */
-struct delta_item	*new_delta_item(const char *, const char *, int);
+struct delta_item	*new_delta(const char *, const char *, int);
 void			free_delta(struct delta_item *);
 
 typedef struct notification_xml {
