@@ -64,7 +64,7 @@ int write_snapshot_publish(XML_DATA *xml_data) {
 		err(1, "file open error");
 	}
 	//decode b64 message
-	decoded_len = b64_decode(snapshot_xml->publish_data, snapshot_xml->publish_data_length, &data_decoded);
+	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
 		fwrite(data_decoded, 1, decoded_len, f);
 		free(data_decoded);

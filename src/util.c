@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <ctype.h>
 
+#include <unistd.h>
 #include <sys/stat.h>
 #include <libgen.h>
 
@@ -13,8 +14,13 @@
 
 OPTS *newOpt(const char *basedir_primary,
 	     const char *basedir_working) {
+	if (!(basedir_primary || basedir_working)) {
+		printf("basedir not set\n");
+		return NULL;
+	}
 	if (!strcmp(basedir_primary, basedir_working)) {
-		err(1, "working and primary dir are the same");
+		printf("working and primary directories are the same\n");
+		return NULL;
 	}
 	OPTS *o = malloc(sizeof(OPTS));
 	o->basedir_primary = basedir_primary;
@@ -22,8 +28,26 @@ OPTS *newOpt(const char *basedir_primary,
 	return o;
 }
 
-OPTS *getopts(int argc, char **argv) {
-	return newOpt("/tmp/rrdp", "/tmp/rrdp_working");
+OPTS *buildopts(int argc, char **argv) {
+	int opt;
+	char *primary = NULL;
+	char *working = NULL;
+	while ((opt = getopt(argc, argv, ":p:w:")) != -1) {
+		switch(opt) {
+		case 'p':
+			primary = optarg;
+			break;
+		case 'w':
+			working = optarg;
+			break;
+		case ':':
+			printf("missing argument\n");
+			return NULL;
+		case '?':
+			printf("unknown option: %c\n", optopt);
+		}
+	}
+	return newOpt(primary, working);
 }
 
 void cleanopts(OPTS *o) {
@@ -168,18 +192,22 @@ int b64_pton(char const *src, unsigned char *target, size_t targsize) {
 	return (tarindex);
 }
 
-int b64_decode(char *src, unsigned int src_len, unsigned char **b64) {
+int b64_decode(char *src, unsigned char **b64) {
 	size_t sz;
 	int b64sz;
 
 	if (!src || !b64)
 		return -1;
 
-	sz = ((src_len + 3) / 4) * 3 + 1;
+	sz = ((strlen(src) + 3) / 4) * 3 + 1;
 	if ((*b64 = malloc(sz)) == NULL)
 		err(1, NULL);
-	if ((b64sz = b64_pton(src, *b64, sz)) < 0)
-		errx(1, "b64_pton");
+	if ((b64sz = b64_pton(src, *b64, sz)) < 0) {
+		free(*b64);
+		*b64 = NULL;
+		printf("failed to b64 decode");
+		return -1;
+	}
 	return b64sz;
 }
 

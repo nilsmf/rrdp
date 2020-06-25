@@ -34,6 +34,15 @@
 // * migrate deltas from working dir
 // * fix file_util.c to not use built calls to system
 // * validate hash of snapshot and delta files
+// - validate session_ids match notification files
+// - use If-Modified-Since header for notification requests
+// - handle network failures with retries
+// - ensure snapshot/notification serial must be greater than previous
+// - ensure mismatching session_ids between notification calls invoke a snapshot
+// - handle unordered deltas
+// - version in notification, snapshot and delta elems must always == 1
+// - oops dont verify withdraws atm
+// - enforce that withdraws have a hash
 // - validate hosts etc stay the same between calls / or only ever use the notification hostname for the folder location
 // - exit early from xml parsing if we know we are ok already?
 // - start to handle errors better
@@ -107,7 +116,11 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 int main(int argc, char **argv) {
 	OPTS *opts;
 
-	opts = getopts(argc, argv);
+	char *args[] = {argv[0], "-p", "/tmp/rrdp", "-w", "/tmp/rrdp_working"};
+	opts = buildopts(5, args);
+	if (!opts) {
+		err(1, "failed to build options");
+	}
 
 	fetch_notification_xml("https://ca.rg.net/rrdp/notify.xml", opts);
 
