@@ -40,13 +40,13 @@ typedef struct delta_item {
 	char *uri;
 	char *hash;
 	int serial;
-	STAILQ_ENTRY(delta_item) q;
+	TAILQ_ENTRY(delta_item) q;
 } DELTA_ITEM;
 
 DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial);
 DELTA_ITEM *free_delta(DELTA_ITEM *d);
 
-STAILQ_HEAD(DELTA_Q, delta_item);
+TAILQ_HEAD(DELTA_Q, delta_item);
 
 typedef struct notificationXML {
 	NOTIFICATION_SCOPE scope;

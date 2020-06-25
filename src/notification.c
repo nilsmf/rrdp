@@ -43,8 +43,8 @@ DELTA_ITEM *free_delta(DELTA_ITEM *d) {
 
 NOTIFICATION_XML *new_notification_xml() {
 	NOTIFICATION_XML *nxml = calloc(1, sizeof(NOTIFICATION_XML));
-//	nxml->delta_q = STAILQ_HEAD_INITIALIZER(nxml->delta_q);
-	STAILQ_INIT(&(nxml->delta_q));
+//	nxml->delta_q = TAILQ_HEAD_INITIALIZER(nxml->delta_q);
+	TAILQ_INIT(&(nxml->delta_q));
 	return nxml;
 }
 
@@ -55,9 +55,9 @@ NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml) {
 		free(nxml->session_id);
 		free(nxml->snapshot_uri);
 		free(nxml->snapshot_hash);
-		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
-			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
-			STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
+		while (!TAILQ_EMPTY(&(nxml->delta_q))) {
+			DELTA_ITEM *d = TAILQ_FIRST(&(nxml->delta_q));
+			TAILQ_REMOVE(&(nxml->delta_q), d, q);
 			free_delta(d);
 		}
 	}
@@ -95,10 +95,10 @@ void check_state(NOTIFICATION_XML *nxml) {
 			return;
 		// current serial is greater lets try deltas
 		} else {
-			if (!STAILQ_EMPTY(&(nxml->delta_q))) {
+			if (!TAILQ_EMPTY(&(nxml->delta_q))) {
 				DELTA_ITEM *d;
 				int serial_counter = 0;
-				STAILQ_FOREACH(d, &(nxml->delta_q), q) {
+				TAILQ_FOREACH(d, &(nxml->delta_q), q) {
 					//TODO should we allow for out of order serial deltas
 					serial_counter++;
 					if (nxml->current_serial + serial_counter != d->serial) {
@@ -214,7 +214,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 			    notification_xml->current_serial < delta_serial) {
 				DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
 				if (d) {
-					STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
+					TAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
 				} else {
 					err(1, "alloc failed - creating delta");
 				}

@@ -101,9 +101,9 @@ void fetch_notification_xml(char* uri, OPTS *opts) {
 			return;
 		case NOTIFICATION_STATE_DELTAS:
 			printf("fetching deltas\n");
-			while (!STAILQ_EMPTY(&(nxml->delta_q))) {
-				DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
-				STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
+			while (!TAILQ_EMPTY(&(nxml->delta_q))) {
+				DELTA_ITEM *d = TAILQ_FIRST(&(nxml->delta_q));
+				TAILQ_REMOVE(&(nxml->delta_q), d, q);
 				fetch_delta_xml(d->uri, d->hash, opts);
 				free_delta(d);
 			}
