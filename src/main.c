@@ -102,7 +102,7 @@ void fetch_notification_xml(char* uri, struct opts *opts) {
 		case NOTIFICATION_STATE_DELTAS:
 			printf("fetching deltas\n");
 			while (!TAILQ_EMPTY(&(nxml->delta_q))) {
-				DELTA_ITEM *d = TAILQ_FIRST(&(nxml->delta_q));
+				struct delta_item *d = TAILQ_FIRST(&(nxml->delta_q));
 				TAILQ_REMOVE(&(nxml->delta_q), d, q);
 				fetch_delta_xml(d->uri, d->hash, opts);
 				free_delta(d);

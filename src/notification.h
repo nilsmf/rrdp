@@ -20,7 +20,7 @@
 #include "util.h"
 #include "fetch_util.h"
 
-typedef enum notification_scope {
+enum notification_scope {
 	NOTIFICATION_SCOPE_START,
 	NOTIFICATION_SCOPE_NOTIFICATION,
 	NOTIFICATION_SCOPE_SNAPSHOT,
@@ -36,34 +36,36 @@ typedef enum notification_state {
 	NOTIFICATION_STATE_ERROR
 } NOTIFICATION_STATE;
 
-typedef struct delta_item {
+struct delta_item {
 	char *uri;
 	char *hash;
 	int serial;
 	TAILQ_ENTRY(delta_item) q;
-} DELTA_ITEM;
+};
 
-DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial);
-DELTA_ITEM *free_delta(DELTA_ITEM *d);
+TAILQ_HEAD(delta_q, delta_item);
 
-TAILQ_HEAD(DELTA_Q, delta_item);
+/* XXXCJ rename to new_delta ?? */
+struct delta_item	*new_delta_item(const char *, const char *, int);
+void			free_delta(struct delta_item *);
 
-typedef struct notificationXML {
-	NOTIFICATION_SCOPE scope;
-	char *xmlns;
-	char *version;
-	char *session_id;
-	int serial;
-	char *current_session_id;
-	int current_serial;
-	char *snapshot_uri;
-	char *snapshot_hash;
-	struct DELTA_Q delta_q;
-	NOTIFICATION_STATE state;
+typedef struct notification_xml {
+	enum notification_scope	scope;
+	char			*xmlns;
+	char			*version;
+	char			*session_id;
+	int			serial;
+	char			*current_session_id;
+	int			current_serial;
+	char			*snapshot_uri;
+	char			*snapshot_hash;
+	struct delta_q		delta_q;
+	enum notification_state	state;
 } NOTIFICATION_XML;
-NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml);
-NOTIFICATION_XML *new_notification_xml(void);
-void print_notification_xml(NOTIFICATION_XML *notification_xml);
 
-XML_DATA *new_notification_xml_data(char *uri, struct opts *opts);
-void save_notification_data(XML_DATA *xml_data);
+struct notification_xml	*new_notification_xml(void);
+void			free_notification_xml(struct notification_xml *);
+void			print_notification_xml(struct notification_xml *);
+
+struct xmldata	*new_notification_xml_data(char *, struct opts *);
+void		save_notification_data(struct xmldata *);
