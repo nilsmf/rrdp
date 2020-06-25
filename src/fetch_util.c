@@ -76,7 +76,7 @@ fetch_xml_uri(struct xmldata *data)
 			SHA256_Final(obuff, &data->ctx);
 			for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
 				sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
-			if(strncmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
+			if(strncasecmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
 				printf("hash '%.*s'\nvs   '%.*s'\n", SHA256_DIGEST_LENGTH*2, data->hash, SHA256_DIGEST_LENGTH*2, obuff_hex);
 				fflush(stdout);
 				err(1, "invalid hash");
