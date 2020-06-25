@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <netinet/in.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #include <err.h>
 #include <errno.h>
 #include <ctype.h>
+#include <resolv.h>
 
 #include <unistd.h>
 #include <sys/stat.h>
@@ -28,8 +30,9 @@
 
 #include "util.h"
 
-struct opts *newOpt(const char *basedir_primary,
-	     const char *basedir_working) {
+static struct opts *
+newOpt(const char *basedir_primary, const char *basedir_working)
+{
 	if (!(basedir_primary || basedir_working)) {
 		printf("basedir not set\n");
 		return NULL;
@@ -44,7 +47,9 @@ struct opts *newOpt(const char *basedir_primary,
 	return o;
 }
 
-struct opts *buildopts(int argc, char **argv) {
+struct opts *
+buildopts(int argc, char **argv)
+{
 	int opt;
 	char *primary = NULL;
 	char *working = NULL;
@@ -66,7 +71,9 @@ struct opts *buildopts(int argc, char **argv) {
 	return newOpt(primary, working);
 }
 
-void cleanopts(struct opts *o) {
+void
+cleanopts(struct opts *o)
+{
 	free(o);
 }
 
@@ -79,134 +86,6 @@ enum rtype {
 	RTYPE_CER,
 	RTYPE_CRL
 };
-
-//TODO stolen from openbsd libc/net
-#define u_char unsigned char
-static const char Base64[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-static const char Pad64 = '=';
-int b64_pton(char const *src, unsigned char *target, size_t targsize) {
-	int tarindex, state, ch;
-	u_char nextbyte;
-	char *pos;
-
-	state = 0;
-	tarindex = 0;
-
-	while ((ch = (unsigned char)*src++) != '\0') {
-		if (isspace(ch))	/* Skip whitespace anywhere. */
-			continue;
-
-		if (ch == Pad64)
-			break;
-
-		pos = strchr(Base64, ch);
-		if (pos == 0) 		/* A non-base64 character. */
-			return (-1);
-
-		switch (state) {
-		case 0:
-			if (target) {
-				if (tarindex >= targsize)
-					return (-1);
-				target[tarindex] = (pos - Base64) << 2;
-			}
-			state = 1;
-			break;
-		case 1:
-			if (target) {
-				if (tarindex >= targsize)
-					return (-1);
-				target[tarindex]   |=  (pos - Base64) >> 4;
-				nextbyte = ((pos - Base64) & 0x0f) << 4;
-				if (tarindex + 1 < targsize)
-					target[tarindex+1] = nextbyte;
-				else if (nextbyte)
-					return (-1);
-			}
-			tarindex++;
-			state = 2;
-			break;
-		case 2:
-			if (target) {
-				if (tarindex >= targsize)
-					return (-1);
-				target[tarindex]   |=  (pos - Base64) >> 2;
-				nextbyte = ((pos - Base64) & 0x03) << 6;
-				if (tarindex + 1 < targsize)
-					target[tarindex+1] = nextbyte;
-				else if (nextbyte)
-					return (-1);
-			}
-			tarindex++;
-			state = 3;
-			break;
-		case 3:
-			if (target) {
-				if (tarindex >= targsize)
-					return (-1);
-				target[tarindex] |= (pos - Base64);
-			}
-			tarindex++;
-			state = 0;
-			break;
-		}
-	}
-
-	/*
-	 * We are done decoding Base-64 chars.  Let's see if we ended
-	 * on a byte boundary, and/or with erroneous trailing characters.
-	 */
-
-	if (ch == Pad64) {			/* We got a pad char. */
-		ch = (unsigned char)*src++;	/* Skip it, get next. */
-		switch (state) {
-		case 0:		/* Invalid = in first position */
-		case 1:		/* Invalid = in second position */
-			return (-1);
-
-		case 2:		/* Valid, means one byte of info */
-			/* Skip any number of spaces. */
-			for (; ch != '\0'; ch = (unsigned char)*src++)
-				if (!isspace(ch))
-					break;
-			/* Make sure there is another trailing = sign. */
-			if (ch != Pad64)
-				return (-1);
-			ch = (unsigned char)*src++;		/* Skip the = */
-			/* Fall through to "single trailing =" case. */
-			/* FALLTHROUGH */
-
-		case 3:		/* Valid, means two bytes of info */
-			/*
-			 * We know this char is an =.  Is there anything but
-			 * whitespace after it?
-			 */
-			for (; ch != '\0'; ch = (unsigned char)*src++)
-				if (!isspace(ch))
-					return (-1);
-
-			/*
-			 * Now make sure for cases 2 and 3 that the "extra"
-			 * bits that slopped past the last full byte were
-			 * zeros.  If we don't check them, they become a
-			 * subliminal channel.
-			 */
-			if (target && tarindex < targsize &&
-			    target[tarindex] != 0)
-				return (-1);
-		}
-	} else {
-		/*
-		 * We ended by seeing the end of the string.  Make sure we
-		 * have no partial bytes lying around.
-		 */
-		if (state != 0)
-			return (-1);
-	}
-
-	return (tarindex);
-}
 
 int b64_decode(char *src, unsigned char **b64) {
 	size_t sz;
@@ -228,7 +107,8 @@ int b64_decode(char *src, unsigned char **b64) {
 }
 
 //TODO stolen from rpki atm
-int rsync_uri_parse(const char **hostp, size_t *hostsz,
+static int
+rsync_uri_parse(const char **hostp, size_t *hostsz,
     const char **modulep, size_t *modulesz,
     const char **pathp, size_t *pathsz,
     enum rtype *rtypep, const char *uri, const char *proto)
@@ -329,7 +209,9 @@ int rsync_uri_parse(const char **hostp, size_t *hostsz,
 	return 1;
 }
 
-char *generate_basepath_from_uri(const char *uri, const char *base_path, const char *proto) {
+char *
+generate_basepath_from_uri(const char *uri, const char *base_path,
+    const char *proto) {
 	if (!uri || !base_path) {
 		err(1, "tried to write to defunct publish uri");
 	}
@@ -349,7 +231,10 @@ char *generate_basepath_from_uri(const char *uri, const char *base_path, const c
 
 	return filename;
 }
-char *generate_filename_from_uri(const char *uri, const char *base_path, const char *proto) {
+
+char *
+generate_filename_from_uri(const char *uri, const char *base_path,
+    const char *proto) {
 	if (!uri || !base_path) {
 		err(1, "tried to write to defunct publish uri");
 	}
