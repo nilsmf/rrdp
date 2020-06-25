@@ -211,15 +211,15 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 
 char *
 generate_basepath_from_uri(const char *uri, const char *base_path,
-    const char *proto) {
+    const char *proto)
+{
+	const char *host;
+	size_t hostsz;
+	char *filename;
+
 	if (!uri || !base_path) {
 		err(1, "tried to write to defunct publish uri");
 	}
-	int BUFF_SIZE=4096;
-	const char *host;
-	size_t hostsz;
-	char *filename = malloc(sizeof(char)*(BUFF_SIZE*2 + strlen(base_path)));
-
 	if (rsync_uri_parse(&host, &hostsz,
 			    NULL, NULL,
 			    NULL, NULL,
@@ -227,24 +227,26 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 		err(1, "parse uri elem fail");
 	}
 
-	sprintf(filename, "%s/%.*s/", base_path, (int)hostsz, host);
+	if (asprintf(&filename, "%s/%.*s/", base_path,
+	    (int)hostsz, host) == -1)
+		err(1, "asprintf");
 
 	return filename;
 }
 
 char *
 generate_filename_from_uri(const char *uri, const char *base_path,
-    const char *proto) {
-	if (!uri || !base_path) {
-		err(1, "tried to write to defunct publish uri");
-	}
-	int BUFF_SIZE=4096;
+    const char *proto)
+{
 	const char *path;
 	size_t pathsz;
 	const char *host;
 	size_t hostsz;
-	char *filename = malloc(sizeof(char)*(BUFF_SIZE*2 + strlen(base_path)));
+	char *filename;
 
+	if (!uri || !base_path) {
+		err(1, "tried to write to defunct publish uri");
+	}
 	if (rsync_uri_parse(&host, &hostsz,
 			    NULL, NULL,
 			    &path, &pathsz,
@@ -252,7 +254,9 @@ generate_filename_from_uri(const char *uri, const char *base_path,
 		err(1, "parse uri elem fail");
 	}
 
-	sprintf(filename, "%s/%.*s/%.*s", base_path, (int)hostsz, host, (int)pathsz, path);
+	if (asprintf(&filename, "%s/%.*s/%.*s", base_path,
+	    (int)hostsz, host, (int)pathsz, path) == -1)
+		err(1, "asprintf");
 
 	return filename;
 }
