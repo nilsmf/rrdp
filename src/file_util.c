@@ -25,7 +25,10 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-int mkpath(char *dir, mode_t mode)
+#include "file_util.h"
+
+int
+mkpath(char *dir, mode_t mode)
 {
 	struct stat sb;
 
@@ -43,7 +46,9 @@ int mkpath(char *dir, mode_t mode)
 	return ret;
 }
 
-int rm_dir(char *dir) {
+int
+rm_dir(char *dir)
+{
 	FTSENT *node;
 	FTS *tree;
 	char *vals[] = {dir, NULL};
@@ -68,7 +73,7 @@ int rm_dir(char *dir) {
 			}
 			continue;
 		}
-		if(unlink(node->fts_path)) {
+		if (unlink(node->fts_path)) {
 			printf("failed to delete %s\n", node->fts_path);
 			return 1;
 		}
@@ -77,7 +82,9 @@ int rm_dir(char *dir) {
 }
 
 
-int mv_delta(char *from, char *to) {
+int
+mv_delta(char *from, char *to)
+{
 	int LENGTH = 50;
 	FTSENT *node;
 	FTS *tree;
