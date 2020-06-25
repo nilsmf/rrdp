@@ -271,7 +271,8 @@ notification_elem_end(void *data, const char *el)
 }
 
 void
-save_notification_data(struct xmldata *xml_data) {
+save_notification_data(struct xmldata *xml_data)
+{
 	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
 	printf("saving %s\n", notification_filename);
 	FILE *f = fopen(notification_filename, "w");
@@ -285,7 +286,8 @@ save_notification_data(struct xmldata *xml_data) {
 }
 
 static void
-fetch_existing_notification_data(struct xmldata *xml_data) {
+fetch_existing_notification_data(struct xmldata *xml_data)
+{
 	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
 	printf("investigating %s\n", notification_filename);
 	fflush(stdout);
