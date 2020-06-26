@@ -292,20 +292,25 @@ delta_content_handler(void *data, const char *content, int length)
 	int new_length;
 	struct xmldata *xml_data = data;
 	struct delta_xml *delta_xml = xml_data->xml_data;
+
 	if (delta_xml->scope == DELTA_SCOPE_PUBLISH) {
-		/* optmisiation atm this often gets called with '\n' as the only data... seems wasteful */
+		/*
+		 * optmisiation, this often gets called with '\n' as the
+		 * only data... seems wasteful
+		 */
 		if (length == 1 && content[0] == '\n')
 			return;
+
 		/* append content to publish_data */
-		if (delta_xml->publish_data) {
-			new_length = delta_xml->publish_data_length + length;
-			delta_xml->publish_data = realloc(delta_xml->publish_data, sizeof(char)*(new_length + 1));
-			strncpy(delta_xml->publish_data + delta_xml->publish_data_length, content, length);
-			delta_xml->publish_data[new_length] = '\0';
-		} else {
-			delta_xml->publish_data = strndup(content, length);
-			new_length = length;
-		}
+		new_length = delta_xml->publish_data_length + length;
+		delta_xml->publish_data = realloc(delta_xml->publish_data,
+		    sizeof(char)*(new_length + 1));
+		if (delta_xml->publish_data == NULL)
+			err(1, "%s", __func__);
+
+		memcpy(delta_xml->publish_data +
+		    delta_xml->publish_data_length, content, length);
+		delta_xml->publish_data[new_length] = '\0';
 		delta_xml->publish_data_length = new_length;
 	}
 }

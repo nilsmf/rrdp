@@ -152,8 +152,7 @@ snapshot_elem_end(void *data, const char *el)
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 			err(1, "parse failed - exited snapshot elem unexpectedely");
 		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
-	}
-	else if (strcmp("publish", el) == 0) {
+	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH)
 			err(1, "parse failed - exited publish elem unexpectedely");
 		if (!snapshot_xml->publish_uri)
@@ -175,20 +174,25 @@ snapshot_content_handler(void *data, const char *content, int length)
 	int new_length;
 	struct xmldata *xml_data = data;
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
-		/* optmisiation atm this often gets called with '\n' as the only data... seems wasteful */
+		/*
+		 * optmisiation, this often gets called with '\n' as the
+		 * only data... seems wasteful
+		 */
 		if (length == 1 && content[0] == '\n')
 			return;
+
 		/* append content to publish_data */
-		if (snapshot_xml->publish_data) {
-			new_length = snapshot_xml->publish_data_length + length;
-			snapshot_xml->publish_data = realloc(snapshot_xml->publish_data, sizeof(char)*(new_length + 1));
-			strncpy(snapshot_xml->publish_data + snapshot_xml->publish_data_length, content, length);
-			snapshot_xml->publish_data[new_length] = '\0';
-		} else {
-			snapshot_xml->publish_data = strndup(content, length);
-			new_length = length;
-		}
+		new_length = snapshot_xml->publish_data_length + length;
+		snapshot_xml->publish_data = realloc(snapshot_xml->publish_data,
+		    new_length + 1);
+		if (snapshot_xml->publish_data == NULL)
+			err(1, "%s", __func__);
+
+		memcpy(snapshot_xml->publish_data +
+		    snapshot_xml->publish_data_length, content, length);
+		snapshot_xml->publish_data[new_length] = '\0';
 		snapshot_xml->publish_data_length = new_length;
 	}
 }
