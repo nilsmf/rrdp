@@ -32,8 +32,7 @@ struct xmldata {
 	void *xml_data;
 };
 
-int fetch_xml_uri(struct xmldata *data);
-void fetch_file(char *filename, FILE* stream_in);
+int fetch_xml_uri(struct xmldata *);
 
 #endif
 

@@ -88,23 +88,3 @@ fetch_xml_uri(struct xmldata *data)
 	}
 }
 
-void
-fetch_file(char *filename, FILE* stream_in)
-{
-	FILE *f;
-	if (!filename) {
-		err(1, "missing filename");
-	}
-	if ((f = fopen(filename, "r"))) {
-		char read_buffer[200];
-		//printf("reading\n");
-		while (fgets(read_buffer, 200, f)) {
-			//printf("%ld chars read:\n", strlen(read_buffer));
-			fprintf(stream_in, "%.200s", read_buffer);
-			fflush(stream_in);
-		}
-	} else {
-		err(1, "fopen fail: %s", filename);
-	}
-}
-
