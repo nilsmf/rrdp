@@ -28,12 +28,10 @@ write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	struct xmldata *xml_data = userdata;
 	XML_Parser p = xml_data->parser;
-	if (xml_data->hash) {
+	if (xml_data->hash)
 		SHA256_Update(&xml_data->ctx, (const u_int8_t *)ptr, nmemb);
-	}
-	if (!p) {
+	if (!p)
 		return 0;
-	}
 	if (!XML_Parse(p, ptr, nmemb, 0)) {
 		fprintf(stderr, "Parse error at line %lu:\n%s\n",
 			XML_GetCurrentLineNumber(p),
@@ -50,18 +48,16 @@ fetch_xml_uri(struct xmldata *data)
 	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	int n;
 
-	if (!data || !data->uri) {
+	if (!data || !data->uri)
 		err(1, "missing url");
-	}
 	CURL *curl = curl_easy_init();
 	if (curl) {
 		printf("starting curl: %s\n", data->uri);
 		fflush(stdout);
 		if (data->hash) {
 			SHA256_Init(&data->ctx);
-			if (strlen(data->hash) != SHA256_DIGEST_LENGTH*2) {
+			if (strlen(data->hash) != SHA256_DIGEST_LENGTH*2)
 				err(1, "invalid hash");
-			}
 		}
 		CURLcode res;
 		curl_easy_setopt(curl, CURLOPT_URL, data->uri);
@@ -83,8 +79,7 @@ fetch_xml_uri(struct xmldata *data)
 			}
 		}
 		return res;
-	} else {
+	} else
 		err(1, "curl init failure");
-	}
 }
 

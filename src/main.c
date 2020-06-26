@@ -67,9 +67,8 @@ static void
 fetch_delta_xml(char *uri, char *hash, struct opts *opts)
 {
 	struct xmldata *delta_xml_data = new_delta_xml_data(uri, hash, opts);
-	if (fetch_xml_uri(delta_xml_data) != 0) {
+	if (fetch_xml_uri(delta_xml_data) != 0)
 		err(1, "failed to curl");
-	}
 	//TODO free this
 	//free_delta_xml(delta_xml_data);
 }
@@ -78,9 +77,8 @@ static void
 fetch_snapshot_xml(char *uri, char *hash, struct opts *opts)
 {
 	struct xmldata *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
-	if (fetch_xml_uri(snapshot_xml_data) != 0) {
+	if (fetch_xml_uri(snapshot_xml_data) != 0)
 		err(1, "failed to curl");
-	}
 	//TODO free this
 	//free_snapshot_xml(snapshot_xml_data);
 }
@@ -89,9 +87,8 @@ static void
 fetch_notification_xml(char* uri, struct opts *opts)
 {
 	struct xmldata *xml_data = new_notification_xml_data(uri, opts);
-	if (fetch_xml_uri(xml_data) != 0) {
+	if (fetch_xml_uri(xml_data) != 0)
 		err(1, "failed to curl");
-	}
 	struct notification_xml *nxml = xml_data->xml_data;
 
 	if (nxml) {
@@ -133,9 +130,8 @@ fetch_notification_xml(char* uri, struct opts *opts)
 				err(1, "failed to update");
 		}
 		save_notification_data(xml_data);
-	} else {
+	} else
 		err(1, "no notification_xml available");
-	}
 }
 
 static __dead void

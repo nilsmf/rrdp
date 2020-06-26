@@ -196,15 +196,13 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 	size_t hostsz;
 	char *filename;
 
-	if (!uri || !base_path) {
+	if (!uri || !base_path)
 		err(1, "tried to write to defunct publish uri");
-	}
 	if (rsync_uri_parse(&host, &hostsz,
 			    NULL, NULL,
 			    NULL, NULL,
-			    NULL, uri, proto) == 0) {
+			    NULL, uri, proto) == 0)
 		err(1, "parse uri elem fail");
-	}
 
 	if (asprintf(&filename, "%s/%.*s", base_path,
 	    (int)hostsz, host) == -1)
@@ -221,15 +219,13 @@ generate_filename_from_uri(const char *uri, const char *base_path,
 	size_t pathsz;
 	char *filename;
 
-	if (!uri || !base_path) {
+	if (!uri || !base_path)
 		err(1, "tried to write to defunct publish uri");
-	}
 	if (rsync_uri_parse(NULL, NULL,
 			    NULL, NULL,
 			    &path, &pathsz,
-			    NULL, uri, proto) == 0) {
+			    NULL, uri, proto) == 0)
 		err(1, "parse uri elem fail");
-	}
 
 	if (asprintf(&filename, "%s/%.*s", base_path,
 	    (int)pathsz, path) == -1)

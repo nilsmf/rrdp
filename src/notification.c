@@ -151,28 +151,25 @@ notification_elem_start(void *data, const char *el, const char **attr)
 
 	// Can only enter here once as we should have no ways to get back to START scope
 	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_START)
 			err(1, "parse failed - entered notification elem unexpectedely");
-		}
 		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("xmlns", attr[i]) == 0) {
+			if (strcmp("xmlns", attr[i]) == 0)
 				notification_xml->xmlns = strdup(attr[i+1]);
-			} else if (strcmp("version", attr[i]) == 0) {
+			else if (strcmp("version", attr[i]) == 0)
 				notification_xml->version = strdup(attr[i+1]);
-			} else if (strcmp("session_id", attr[i]) == 0) {
+			else if (strcmp("session_id", attr[i]) == 0)
 				notification_xml->session_id = strdup(attr[i+1]);
-			} else if (strcmp("serial", attr[i]) == 0) {
+			else if (strcmp("serial", attr[i]) == 0)
 				notification_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
-			} else {
+			else
 				err(1, "parse failed - non conforming attribute found in notification elem");
-			}
 		}
 		if (!(notification_xml->xmlns &&
 		      notification_xml->version &&
 		      notification_xml->session_id &&
-		      notification_xml->serial)) {
+		      notification_xml->serial))
 			err(1, "parse failed - incomplete notification attributes");
-		}
 
 		check_state(notification_xml);
 
@@ -181,40 +178,35 @@ notification_elem_start(void *data, const char *el, const char **attr)
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
 	} else if (strcmp("snapshot", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION)
 			err(1, "parse failed - entered snapshot elem unexpectedely");
-		}
 		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0) {
+			if (strcmp("uri", attr[i]) == 0)
 				notification_xml->snapshot_uri = strdup(attr[i+1]);
-			} else if (strcmp("hash", attr[i]) == 0) {
+			else if (strcmp("hash", attr[i]) == 0)
 				notification_xml->snapshot_hash = strdup(attr[i+1]);
-			} else {
+			else
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
-			}
 		}
 		if (!notification_xml->snapshot_uri ||
-		    !notification_xml->snapshot_hash) {
+		    !notification_xml->snapshot_hash)
 			err(1, "parse failed - incomplete snapshot attributes");
-		}
 		notification_xml->scope = NOTIFICATION_SCOPE_SNAPSHOT;
 	} else if (strcmp("delta", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
 			err(1, "parse failed - entered delta elem unexpectedely");
-		}
 		const char *delta_uri = NULL;
 		const char *delta_hash = NULL;
 		int delta_serial = 0;
 		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0) {
+			if (strcmp("uri", attr[i]) == 0)
 				delta_uri = attr[i+1];
-			} else if (strcmp("hash", attr[i]) == 0) {
+			else if (strcmp("hash", attr[i]) == 0)
 				delta_hash = attr[i+1];
-			} else if (strcmp("serial", attr[i]) == 0) {
+			else if (strcmp("serial", attr[i]) == 0)
 				delta_serial = (int)strtol(attr[i+1],NULL,BASE10);
-			} else {
+			else
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
-			}
 		}
 		//Only add to the list if we are relevant
 		if (delta_uri && delta_hash && delta_serial) {
@@ -222,21 +214,17 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			if (notification_xml->current_serial &&
 			    notification_xml->current_serial < delta_serial) {
 				struct delta_item *d = new_delta(delta_uri, delta_hash, delta_serial);
-				if (d) {
+				if (d)
 					TAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
-				} else {
+				else
 					err(1, "alloc failed - creating delta");
-				}
-			} else {
+			} else
 				printf("excluding delta %d %s \n", delta_serial, delta_uri);
-			}
-		} else {
+		} else
 			err(1, "parse failed - incomplete delta attributes");
-		}
 		notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
-	} else {
+	} else
 		err(1, "parse failed - unexpected elem exit found");
-	}
 }
 
 static void
@@ -245,28 +233,24 @@ notification_elem_end(void *data, const char *el)
 	struct xmldata *xml_data = data;
 	struct notification_xml *notification_xml = (struct notification_xml*)xml_data->xml_data;
 	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
 			err(1, "parse failed - exited notification elem unexpectedely");
-		}
 		notification_xml->scope = NOTIFICATION_SCOPE_END;
 		//check the state to see if we have enough delta info
 		check_state(notification_xml);
 		//print_notification_xml(notification_xml);
 		//printf("end %s\n", el);
 	} else if (strcmp("snapshot", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT)
 			err(1, "parse failed - exited snapshot elem unexpectedely");
-		}
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else if (strcmp("delta", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA) {
+		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA)
 			err(1, "parse failed - exited delta elem unexpectedely");
-		}
 		//print_notification_xml(notification_xml);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
-	} else {
+	} else
 		err(1, "parse failed - unexpected elem exit found");
-	}
 }
 
 /* XXXCJ this needs more cleanup and error checking */
@@ -317,18 +301,17 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 				break;
 			}
 			line[s - 1] = '\0';
-			if (l == 0) {
+			if (l == 0)
 				nxml->current_session_id = strdup(line);
-			} else if (l == 1) {
+			else if (l == 1) {
 				/* XXXCJ use strtonum here and maybe 64bit int */
 				nxml->current_serial = (int)strtol(line,NULL,BASE10);
 			}
 			l++;
 		}
 		fclose(f);
-	} else {
+	} else
 		printf("no file %s found", notification_filename);
-	}
 	free(notification_filename);
 }
 

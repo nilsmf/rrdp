@@ -67,9 +67,8 @@ get_hex_hash(FILE *f, char *obuff_hex)
 	if (f && obuff_hex) {
 		SHA256_CTX ctx;
 		SHA256_Init(&ctx);
-		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f))) {
+		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f)))
 			SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
-		}
 		SHA256_Final(obuff, &ctx);
 		for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
 			sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
@@ -148,9 +147,8 @@ verify_publish(struct xmldata *xml_data)
 static FILE *
 open_delta_file(const char *publish_uri, const char *basedir)
 {
-	if (!publish_uri) {
+	if (!publish_uri)
 		err(1, "tried to write to defunct publish uri");
-	}
 	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
 	char *filename = generate_filename_from_uri(publish_uri, basedir, NULL);
 	// TODO quick and dirty getting path
@@ -171,9 +169,8 @@ write_delta_publish(struct xmldata *xml_data)
 	unsigned char *data_decoded;
 	int decoded_len = 0;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
+	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
 		err(1, "file open error");
-	}
 	//TODO decode b64 message
 	decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
@@ -192,9 +189,8 @@ write_delta_withdraw(struct xmldata* xml_data)
 	// or keep list in memory and append or remove as we progress...
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working))) {
+	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
 		err(1, "file open error");
-	}
 	fclose(f);
 	return 0;
 }
@@ -208,54 +204,47 @@ delta_elem_start(void *data, const char *el, const char **attr)
 
 	// Can only enter here once as we should have no ways to get back to NONE scope
 	if (strcmp("delta", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_NONE) {
+		if (delta_xml->scope != DELTA_SCOPE_NONE)
 			err(1, "parse failed - entered delta elem unexpectedely");
-		}
 		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("xmlns", attr[i]) == 0) {
+			if (strcmp("xmlns", attr[i]) == 0)
 				delta_xml->xmlns = strdup(attr[i+1]);
-			} else if (strcmp("version", attr[i]) == 0) {
+			else if (strcmp("version", attr[i]) == 0)
 				delta_xml->version = strdup(attr[i+1]);
-			} else if (strcmp("session_id", attr[i]) == 0) {
+			else if (strcmp("session_id", attr[i]) == 0)
 				delta_xml->session_id = strdup(attr[i+1]);
-			} else if (strcmp("serial", attr[i]) == 0) {
+			else if (strcmp("serial", attr[i]) == 0)
 				delta_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
-			} else {
+			else
 				err(1, "parse failed - non conforming attribute found in delta elem");
-			}
 		}
 		if (!(delta_xml->xmlns &&
 		      delta_xml->version &&
 		      delta_xml->session_id &&
-		      delta_xml->serial)) {
+		      delta_xml->serial))
 			err(1, "parse failed - incomplete delta attributes");
-		}
 
 		delta_xml->scope = DELTA_SCOPE_DELTA;
 		//print_delta_xml(delta_xml);
 	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
 	// mem is cleared in end block, (TODO or on parse failure)
 	} else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_DELTA) {
+		if (delta_xml->scope != DELTA_SCOPE_DELTA)
 			err(1, "parse failed - entered publish elem unexpectedely");
-		}
 		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0) {
+			if (strcmp("uri", attr[i]) == 0)
 				delta_xml->publish_uri = strdup(attr[i+1]);
-			} else if (strcmp("hash", attr[i]) == 0) {
+			else if (strcmp("hash", attr[i]) == 0)
 				delta_xml->publish_hash = strdup(attr[i+1]);
-			} else if (strcmp("xmlns", attr[i]) == 0) {
-			} else {
+			else if (strcmp("xmlns", attr[i]) == 0); /* XXX should we do nothing? */
+			else
 				err(1, "parse failed - non conforming attribute found in publish elem");
-			}
 		}
-		if (!delta_xml->publish_uri) {
+		if (!delta_xml->publish_uri)
 			err(1, "parse failed - incomplete publish attributes");
-		}
 		delta_xml->scope = DELTA_SCOPE_PUBLISH;
-	} else {
+	} else
 		err(1, "parse failed - unexpected elem exit found");
-	}
 }
 
 static void
@@ -264,31 +253,26 @@ delta_elem_end(void *data, const char *el)
 	struct xmldata *xml_data = data;
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	if (strcmp("delta", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_DELTA) {
+		if (delta_xml->scope != DELTA_SCOPE_DELTA)
 			err(1, "parse failed - exited delta elem unexpectedely");
-		}
 		delta_xml->scope = DELTA_SCOPE_END;
 		//print_delta_xml(delta_xml);
 		//printf("end %s\n", el);
 	}
 	//TODO does this allow <publish></withdraw> or is that caught by basic xml parsing
 	else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_PUBLISH) {
+		if (delta_xml->scope != DELTA_SCOPE_PUBLISH)
 			err(1, "parse failed - exited publish elem unexpectedely");
-		}
-		if (!delta_xml->publish_uri) {
+		if (!delta_xml->publish_uri)
 			err(1, "parse failed - no data recovered from publish elem");
-		}
 		//TODO should we never keep this much and stream it straight to staging file?
 		//printf("publish: '%.*s'\n", delta_xml->publish_data ? delta_xml->publish_data_length : 4, delta_xml->publish_data ?: "NULL");
 		if (strcmp("publish", el) == 0) {
-			if (verify_publish(xml_data)) {
+			if (verify_publish(xml_data))
 				err(1, "failed to verify delta hash");
-			}
 			write_delta_publish(xml_data);
-		} else {
+		} else
 			write_delta_withdraw(xml_data);
-		}
 		free(delta_xml->publish_uri);
 		delta_xml->publish_uri = NULL;
 		free(delta_xml->publish_hash);
@@ -297,9 +281,8 @@ delta_elem_end(void *data, const char *el)
 		delta_xml->publish_data = NULL;
 		delta_xml->publish_data_length = 0;
 		delta_xml->scope = DELTA_SCOPE_DELTA;
-	} else {
+	} else
 		err(1, "parse failed - unexpected elem exit found");
-	}
 }
 
 static void
@@ -310,9 +293,8 @@ delta_content_handler(void *data, const char *content, int length)
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	if (delta_xml->scope == DELTA_SCOPE_PUBLISH) {
 		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
-		if (length == 1 && content[0] == '\n') {
+		if (length == 1 && content[0] == '\n')
 			return;
-		}
 		//printf("parse chunk %d\n", length);
 		//append content to publish_data
 		if (delta_xml->publish_data) {
@@ -325,9 +307,6 @@ delta_content_handler(void *data, const char *content, int length)
 			new_length = length;
 		}
 		delta_xml->publish_data_length = new_length;
-	}
-	else {
-		//printf("chars found '%.*s'\n", length, content);
 	}
 }
 
