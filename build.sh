@@ -13,6 +13,7 @@ LINKS+=" -L/usr/local/opt/openssl/lib"
 LINKS2="-lexpat"
 LINKS2+=" -lcurl"
 LINKS2+=" -lcrypto"
+LINKS2+=" -lresolv"
 CFLAGS="-Wall"
 CFLAGS+=" -c"
 
