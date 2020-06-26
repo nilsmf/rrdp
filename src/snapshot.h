@@ -14,8 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <stdio.h>
-#include <src/fetch_util.h>
-#include <src/util.h>
+#include "fetch_util.h"
+#include "util.h"
 
-XML_DATA *new_snapshot_xml_data(char *uri, char *hash, OPTS *opts);
+struct xmldata *new_snapshot_xml_data(char *, char *, struct opts *);

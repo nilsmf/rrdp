@@ -21,10 +21,12 @@
 
 #include <expat.h>
 
-#include <src/notification.h>
+#include "notification.h"
 
-DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial) {
-	DELTA_ITEM *d = calloc(1, sizeof(DELTA_ITEM));
+struct delta_item *
+new_delta(const char *uri, const char *hash, int serial)
+{
+	struct delta_item *d = calloc(1, sizeof(struct delta_item));
 	if (d) {
 		d->uri = strdup(uri);
 		d->hash = strdup(hash);
@@ -33,39 +35,40 @@ DELTA_ITEM *new_delta_item(const char *uri, const char *hash, int serial) {
 	return d;
 }
 
-DELTA_ITEM *free_delta(DELTA_ITEM *d) {
+void
+free_delta(struct delta_item *d) {
 	free(d->uri);
 	free(d->hash);
 	free(d);
-
-	return NULL;
 }
 
-NOTIFICATION_XML *new_notification_xml() {
-	NOTIFICATION_XML *nxml = calloc(1, sizeof(NOTIFICATION_XML));
-//	nxml->delta_q = STAILQ_HEAD_INITIALIZER(nxml->delta_q);
-	STAILQ_INIT(&(nxml->delta_q));
+struct notification_xml *new_notification_xml() {
+	struct notification_xml *nxml = calloc(1, sizeof(struct notification_xml));
+	TAILQ_INIT(&(nxml->delta_q));
 	return nxml;
 }
 
-NOTIFICATION_XML *free_notification_xml(NOTIFICATION_XML *nxml) {
+void
+free_notification_xml(struct notification_xml *nxml)
+{
 	if (nxml) {
 		free(nxml->xmlns);
 		free(nxml->version);
 		free(nxml->session_id);
 		free(nxml->snapshot_uri);
 		free(nxml->snapshot_hash);
-		while (!STAILQ_EMPTY(&(nxml->delta_q))) {
-			DELTA_ITEM *d = STAILQ_FIRST(&(nxml->delta_q));
-			STAILQ_REMOVE_HEAD(&(nxml->delta_q), q);
+		while (!TAILQ_EMPTY(&(nxml->delta_q))) {
+			struct delta_item *d = TAILQ_FIRST(&(nxml->delta_q));
+			TAILQ_REMOVE(&(nxml->delta_q), d, q);
 			free_delta(d);
 		}
 	}
 	free(nxml);
-	return NULL;
 }
 
-void check_state(NOTIFICATION_XML *nxml) {
+static void
+check_state(struct notification_xml *nxml)
+{
 	// Already have an error or already up to date keep it persistent
 	if (nxml->state == NOTIFICATION_STATE_ERROR || nxml->state == NOTIFICATION_STATE_NONE)
 		return;
@@ -95,10 +98,10 @@ void check_state(NOTIFICATION_XML *nxml) {
 			return;
 		// current serial is greater lets try deltas
 		} else {
-			if (!STAILQ_EMPTY(&(nxml->delta_q))) {
-				DELTA_ITEM *d;
+			if (!TAILQ_EMPTY(&(nxml->delta_q))) {
+				struct delta_item *d;
 				int serial_counter = 0;
-				STAILQ_FOREACH(d, &(nxml->delta_q), q) {
+				TAILQ_FOREACH(d, &(nxml->delta_q), q) {
 					//TODO should we allow for out of order serial deltas
 					serial_counter++;
 					if (nxml->current_serial + serial_counter != d->serial) {
@@ -124,7 +127,9 @@ void check_state(NOTIFICATION_XML *nxml) {
 	return;
 }
 
-void print_notification_xml(NOTIFICATION_XML *notification_xml) {
+void
+print_notification_xml(struct notification_xml *notification_xml)
+{
 	printf("scope: %d\n", notification_xml->scope);
 	printf("state: %d\n", notification_xml->state);
 	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
@@ -137,15 +142,19 @@ void print_notification_xml(NOTIFICATION_XML *notification_xml) {
 	printf("snapshot_hash: %s\n", notification_xml->snapshot_hash ?: "NULL");
 }
 
-void notification_elem_start(void *data, const char *el, const char **attr) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)xml_data->xml_data;
+static void
+notification_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+	int i;
+
 	// Can only enter here once as we should have no ways to get back to START scope
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
 			err(1, "parse failed - entered notification elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0) {
 				notification_xml->xmlns = strdup(attr[i+1]);
 			} else if (strcmp("version", attr[i]) == 0) {
@@ -175,7 +184,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
 			err(1, "parse failed - entered snapshot elem unexpectedely");
 		}
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				notification_xml->snapshot_uri = strdup(attr[i+1]);
 			} else if (strcmp("hash", attr[i]) == 0) {
@@ -196,7 +205,7 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 		const char *delta_uri = NULL;
 		const char *delta_hash = NULL;
 		int delta_serial = 0;
-		for (int i = 0; attr[i]; i += 2) {
+		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0) {
 				delta_uri = attr[i+1];
 			} else if (strcmp("hash", attr[i]) == 0) {
@@ -212,9 +221,9 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 			//TODO current use delta check expects current delta in list as well...
 			if (notification_xml->current_serial &&
 			    notification_xml->current_serial < delta_serial) {
-				DELTA_ITEM *d = new_delta_item(delta_uri, delta_hash, delta_serial);
+				struct delta_item *d = new_delta(delta_uri, delta_hash, delta_serial);
 				if (d) {
-					STAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
+					TAILQ_INSERT_TAIL(&(notification_xml->delta_q), d, q);
 				} else {
 					err(1, "alloc failed - creating delta");
 				}
@@ -230,9 +239,11 @@ void notification_elem_start(void *data, const char *el, const char **attr) {
 	}
 }
 
-void notification_elem_end(void *data, const char *el) {
-	XML_DATA *xml_data = (XML_DATA*)data;
-	NOTIFICATION_XML *notification_xml = (NOTIFICATION_XML*)xml_data->xml_data;
+static void
+notification_elem_end(void *data, const char *el)
+{
+	struct xmldata *xml_data = data;
+	struct notification_xml *notification_xml = (struct notification_xml*)xml_data->xml_data;
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
 			err(1, "parse failed - exited notification elem unexpectedely");
@@ -258,12 +269,21 @@ void notification_elem_end(void *data, const char *el) {
 	}
 }
 
-void save_notification_data(XML_DATA *xml_data) {
-	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+/* XXXCJ this needs more cleanup and error checking */
+void
+save_notification_data(struct xmldata *xml_data)
+{
+	char *notification_filename;
+
+	if (asprintf(&notification_filename, "%s/.state",
+	    xml_data->opts->basedir_primary) == -1)
+		err(1, "%s", __func__);
+
 	printf("saving %s\n", notification_filename);
+
 	FILE *f = fopen(notification_filename, "w");
 	if (f) {
-		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
+		struct notification_xml *nxml = xml_data->xml_data;
 		//TODO maybe this should actually come from the snapshot/deltas that get written
 		// might not matter if we have verified consistency already
 		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
@@ -271,21 +291,40 @@ void save_notification_data(XML_DATA *xml_data) {
 	}
 }
 
-void fetch_existing_notification_data(XML_DATA *xml_data) {
-	char *notification_filename = generate_filename_from_uri(xml_data->uri, xml_data->opts->basedir_primary, "https://");
+/* XXXCJ dito */
+static void
+fetch_existing_notification_data(struct xmldata *xml_data)
+{
+	char *notification_filename;
+
+	if (asprintf(&notification_filename, "%s/.state",
+	    xml_data->opts->basedir_primary) == -1)
+		err(1, "%s", __func__);
+
 	printf("investigating %s\n", notification_filename);
 	fflush(stdout);
 	char *line = NULL;
 	size_t len = 0;
 	FILE *f = fopen(notification_filename, "r");
 	if (f) {
-		NOTIFICATION_XML *nxml = (NOTIFICATION_XML*)xml_data->xml_data;
-		ssize_t s = getline(&line, &len, f);
-		line[strlen(line)-1] = '\0';
-		nxml->current_session_id = strdup(line);
-		s = getline(&line, &len, f);
-		line[strlen(line)-1] = '\0';
-		nxml->current_serial = (int)strtol(line,NULL,BASE10);
+		struct notification_xml *nxml = xml_data->xml_data;
+		ssize_t s;
+		int l = 0;
+
+		while (l < 2 && (s = getline(&line, &len, f)) != -1) {
+			if (s < 1) {
+				printf("bad notification file\n");
+				break;
+			}
+			line[s - 1] = '\0';
+			if (l == 0) {
+				nxml->current_session_id = strdup(line);
+			} else if (l == 1) {
+				/* XXXCJ use strtonum here and maybe 64bit int */
+				nxml->current_serial = (int)strtol(line,NULL,BASE10);
+			}
+			l++;
+		}
 		fclose(f);
 	} else {
 		printf("no file %s found", notification_filename);
@@ -293,8 +332,10 @@ void fetch_existing_notification_data(XML_DATA *xml_data) {
 	free(notification_filename);
 }
 
-XML_DATA *new_notification_xml_data(char *uri, OPTS *opts) {
-	XML_DATA *xml_data = calloc(1, sizeof(XML_DATA));
+struct xmldata *
+new_notification_xml_data(char *uri, struct opts *opts)
+{
+	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
 
 	xml_data->xml_data = (void*)new_notification_xml();
 	xml_data->uri = uri;

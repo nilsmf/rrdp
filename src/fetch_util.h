@@ -21,18 +21,18 @@
 #include <expat.h>
 #include <openssl/sha.h>
 
-#include <src/util.h>
+#include "util.h"
 
-typedef struct xmldata {
-	OPTS *opts;
+struct xmldata {
+	struct opts *opts;
 	char *uri;
 	char *hash;
 	SHA256_CTX ctx;
 	XML_Parser parser;
 	void *xml_data;
-} XML_DATA;
+};
 
-int fetch_xml_uri(XML_DATA *data);
+int fetch_xml_uri(struct xmldata *data);
 void fetch_file(char *filename, FILE* stream_in);
 
 #endif

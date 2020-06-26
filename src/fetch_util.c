@@ -19,12 +19,14 @@
 #include <string.h>
 #include <curl/curl.h>
 
-#include <src/fetch_util.h>
+#include "fetch_util.h"
 
 #define USER_AGENT "rrdp-client v0.1"
 
-size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
-	XML_DATA *xml_data = (XML_DATA*)userdata;
+static size_t
+write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+	struct xmldata *xml_data = userdata;
 	XML_Parser p = xml_data->parser;
 	if (xml_data->hash) {
 		SHA256_Update(&xml_data->ctx, (const u_int8_t *)ptr, nmemb);
@@ -41,9 +43,13 @@ size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
 	return nmemb;
 }
 
-int fetch_xml_uri(XML_DATA *data) {
+int
+fetch_xml_uri(struct xmldata *data)
+{
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	char obuff_hex[SHA256_DIGEST_LENGTH*2];
+	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
+	int n;
+
 	if (!data || !data->uri) {
 		err(1, "missing url");
 	}
@@ -68,9 +74,9 @@ int fetch_xml_uri(XML_DATA *data) {
 		curl_easy_cleanup(curl);
 		if (data->hash) {
 			SHA256_Final(obuff, &data->ctx);
-			for (int n = 0; n < SHA256_DIGEST_LENGTH; n++)
+			for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
 				sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
-			if(strncmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
+			if(strncasecmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
 				printf("hash '%.*s'\nvs   '%.*s'\n", SHA256_DIGEST_LENGTH*2, data->hash, SHA256_DIGEST_LENGTH*2, obuff_hex);
 				fflush(stdout);
 				err(1, "invalid hash");
@@ -82,7 +88,9 @@ int fetch_xml_uri(XML_DATA *data) {
 	}
 }
 
-void fetch_file(char *filename, FILE* stream_in) {
+void
+fetch_file(char *filename, FILE* stream_in)
+{
 	FILE *f;
 	if (!filename) {
 		err(1, "missing filename");

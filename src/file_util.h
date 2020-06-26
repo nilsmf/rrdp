@@ -14,9 +14,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <stdlib.h>
-
-int mkpath(char *dir, mode_t mode);
-int rm_dir(char *dir);
-int mv_delta(char *from, char *to);
-
+int mkpath(char *, mode_t);
+int rm_dir(char *);
+int mv_delta(char *, char *);
