@@ -59,11 +59,11 @@ open_snapshot_file(const char *publish_uri, const char *base_dir)
 {
 	if (!publish_uri)
 		err(1, "tried to write to defunct publish uri");
-	//TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181
+	/* TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181 */
 	char *filename = generate_filename_from_uri(publish_uri, base_dir, NULL);
 
-	// TODO quick and dirty getting path
-	//create dir if necessary
+	/* TODO quick and dirty getting path */
+	/* create dir if necessary */
 	char *path_delim = strrchr(filename, '/');
 	path_delim[0] = '\0';
 	mkpath(filename, 0777);
@@ -82,7 +82,7 @@ write_snapshot_publish(struct xmldata *xml_data)
 	FILE *f;
 	if (!(f = open_snapshot_file(snapshot_xml->publish_uri, xml_data->opts->basedir_working)))
 		err(1, "file open error");
-	//decode b64 message
+	/* decode b64 message */
 	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
 		fwrite(data_decoded, 1, decoded_len, f);
@@ -99,7 +99,7 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	int i;
 
-	// Can only enter here once as we should have no ways to get back to NONE scope
+	/* Can only enter here once as we should have no ways to get back to NONE scope */
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE)
 			err(1, "parse failed - entered snapshot elem unexpectedely");
@@ -122,9 +122,10 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 			err(1, "parse failed - incomplete snapshot attributes");
 
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
-		//print_snapshot_xml(snapshot_xml);
-	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
-	// mem is cleared in end block, (TODO or on parse failure)
+	/*
+	 * Will enter here multiple times, BUT never nested. will start collecting character data in that handler
+	 * mem is cleared in end block, (TODO or on parse failure)
+	 */
 	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 			err(1, "parse failed - entered publish elem unexpectedely");
@@ -151,16 +152,12 @@ snapshot_elem_end(void *data, const char *el)
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 			err(1, "parse failed - exited snapshot elem unexpectedely");
 		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
-		//print_snapshot_xml(snapshot_xml);
-		//printf("end %s\n", el);
 	}
 	else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH)
 			err(1, "parse failed - exited publish elem unexpectedely");
 		if (!snapshot_xml->publish_uri)
 			err(1, "parse failed - no data recovered from publish elem");
-		//TODO write this data somewhere (and/or never keep this much and stream it straight to staging file?)
-		//printf("publish: '%.*s'\n", snapshot_xml->publish_data ? snapshot_xml->publish_data_length : 4, snapshot_xml->publish_data ?: "NULL");
 		write_snapshot_publish(xml_data);
 		free(snapshot_xml->publish_uri);
 		snapshot_xml->publish_uri = NULL;
@@ -179,11 +176,10 @@ snapshot_content_handler(void *data, const char *content, int length)
 	struct xmldata *xml_data = data;
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
-		//optmisiation atm this often gets called with '\n' as the only data... seems wasteful
+		/* optmisiation atm this often gets called with '\n' as the only data... seems wasteful */
 		if (length == 1 && content[0] == '\n')
 			return;
-		//printf("parse chunk %d\n", length);
-		//append content to publish_data
+		/* append content to publish_data */
 		if (snapshot_xml->publish_data) {
 			new_length = snapshot_xml->publish_data_length + length;
 			snapshot_xml->publish_data = realloc(snapshot_xml->publish_data, sizeof(char)*(new_length + 1));

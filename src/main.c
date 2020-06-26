@@ -24,44 +24,21 @@
 #include "delta.h"
 #include "file_util.h"
 
-// libxm (l?)
-// ftp/curl
-//
-// xml has urls to download the files
-//
-// rrdp servers
-// step 0. fetch notification files
-// 	step 0.1 process notification files
-// step 1. fetch snapshot
-// 	step 1.1 process snapshot files
-// step 2. fetch delta
-// 	step 2.1 process deltas
-//
-// ? If 1 delta fails should we try other snapshots
-//  if parsing a delta fails whole snapshot must fail since we wont be able to update all the bits and pieces... hmmm tends to imply an intermediate dir...
-//
-// nice to have optimise with keep alives etc.
-//
-// * start to check which things need to be updated (serial #)
-// * start to validate file existance and hash
-// * add 2nd layer of files in case of error
-// * fix b64 file saving
-// * migrate snapshot from working dir
-// * migrate deltas from working dir
-// * fix file_util.c to not use built calls to system
-// * validate hash of snapshot and delta files
-// - validate session_ids match notification files
-// - use If-Modified-Since header for notification requests
-// - handle network failures with retries
-// - ensure snapshot/notification serial must be greater than previous
-// - ensure mismatching session_ids between notification calls invoke a snapshot
-// - handle unordered deltas
-// - version in notification, snapshot and delta elems must always == 1
-// - oops dont verify withdraws atm
-// - enforce that withdraws have a hash
-// - validate hosts etc stay the same between calls / or only ever use the notification hostname for the folder location
-// - exit early from xml parsing if we know we are ok already?
-// - start to handle errors better
+/*
+ * - validate session_ids match notification files
+ * - use If-Modified-Since header for notification requests
+ * - handle network failures with retries
+ * - ensure snapshot/notification serial must be greater than previous
+ * - ensure mismatching session_ids between notification calls invoke a snapshot
+ * - handle unordered deltas
+ * - version in notification, snapshot and delta elems must always == 1
+ * - oops dont verify withdraws atm
+ * - enforce that withdraws have a hash
+ * - validate hosts etc stay the same between calls / or only ever use the notification hostname for the folder location
+ * - exit early from xml parsing if we know we are ok already?
+ * - start to handle errors better
+ * - nice to have optimise with keep alives etc.
+ */
 
 static void
 fetch_delta_xml(char *uri, char *hash, struct opts *opts)
@@ -69,8 +46,10 @@ fetch_delta_xml(char *uri, char *hash, struct opts *opts)
 	struct xmldata *delta_xml_data = new_delta_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(delta_xml_data) != 0)
 		err(1, "failed to curl");
-	//TODO free this
-	//free_delta_xml(delta_xml_data);
+	/*
+	 * TODO free this
+	 * free_delta_xml(delta_xml_data);
+	 */
 }
 
 static void
@@ -79,8 +58,10 @@ fetch_snapshot_xml(char *uri, char *hash, struct opts *opts)
 	struct xmldata *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
 	if (fetch_xml_uri(snapshot_xml_data) != 0)
 		err(1, "failed to curl");
-	//TODO free this
-	//free_snapshot_xml(snapshot_xml_data);
+	/*
+	 * TODO free this
+	 * free_snapshot_xml(snapshot_xml_data);
+	 */
 }
 
 static void
@@ -111,9 +92,11 @@ fetch_notification_xml(char* uri, struct opts *opts)
 				fetch_delta_xml(d->uri, d->hash, opts);
 				free_delta(d);
 			}
-			//TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
-			// ie. do a mv_delta after each loop above
-			//if failed to fetch/apply deltas then fallthrough to snapshot
+			/*
+			 * TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
+			 * ie. do a mv_delta after each loop above
+			 * if failed to fetch/apply deltas then fallthrough to snapshot
+			 */
 			if (!mv_delta(working_path, primary_path)) {
 				printf("delta migrate passed\n");
 				break;

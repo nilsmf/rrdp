@@ -69,11 +69,11 @@ free_notification_xml(struct notification_xml *nxml)
 static void
 check_state(struct notification_xml *nxml)
 {
-	// Already have an error or already up to date keep it persistent
+	/* Already have an error or already up to date keep it persistent */
 	if (nxml->state == NOTIFICATION_STATE_ERROR || nxml->state == NOTIFICATION_STATE_NONE)
 		return;
 
-	// No current data have to go from the snapshot
+	/* No current data have to go from the snapshot */
 	if (!nxml->current_session_id ||
 	    !nxml->current_serial) {
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
@@ -81,28 +81,28 @@ check_state(struct notification_xml *nxml)
 	}
 
 	if (nxml->session_id && nxml->serial) {
-		// New session available should go from snapshot
+		/* New session available should go from snapshot */
 		if(strcmp(nxml->current_session_id, nxml->session_id) != 0) {
 			nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 			return;
 		}
 		int serial_diff = nxml->serial - nxml->current_serial;
-		// We are up to date take no further action
+		/* We are up to date take no further action */
 		if (serial_diff == 0) {
 			nxml->state = NOTIFICATION_STATE_NONE;
 			return;
-		//current serial is larger! oh oh should probably go from snapshot
-		//TODO check this assumption
+		/* current serial is larger! oh oh should probably go from snapshot */
+		/* TODO check this assumption */
 		} else if (serial_diff < 0) {
 			nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 			return;
-		// current serial is greater lets try deltas
+		/* current serial is greater lets try deltas */
 		} else {
 			if (!TAILQ_EMPTY(&(nxml->delta_q))) {
 				struct delta_item *d;
 				int serial_counter = 0;
 				TAILQ_FOREACH(d, &(nxml->delta_q), q) {
-					//TODO should we allow for out of order serial deltas
+					/* TODO allow for out of order serial deltas */
 					serial_counter++;
 					if (nxml->current_serial + serial_counter != d->serial) {
 						nxml->state = NOTIFICATION_STATE_SNAPSHOT;
@@ -115,15 +115,15 @@ check_state(struct notification_xml *nxml)
 					return;
 				}
 				printf("Happy to apply %d deltas", serial_counter);
-				//All serials matched
+				/* All serials matched */
 				nxml->state = NOTIFICATION_STATE_DELTAS;
 				return;
 			}
-			// TODO should we have a default here
+			/* TODO should we have a default here */
 		}
-		// TODO should we have a default here
+		/* TODO should we have a default here */
 	}
-	// TODO should we have a default here
+	/* TODO should we have a default here */
 	return;
 }
 
@@ -149,7 +149,7 @@ notification_elem_start(void *data, const char *el, const char **attr)
 	struct notification_xml *notification_xml = xml_data->xml_data;
 	int i;
 
-	// Can only enter here once as we should have no ways to get back to START scope
+	/* Can only enter here once as we should have no ways to get back to START scope */
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_START)
 			err(1, "parse failed - entered notification elem unexpectedely");
@@ -174,9 +174,10 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		check_state(notification_xml);
 
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
-		//print_notification_xml(notification_xml);
-	// Will enter here multiple times, BUT never nested. will start collecting character data in that handler
-	// mem is cleared in end block, (TODO or on parse failure)
+	/*
+	 * Will enter here multiple times, BUT never nested. will start collecting character data in that handler
+	 * mem is cleared in end block, (TODO or on parse failure)
+	 */
 	} else if (strcmp("snapshot", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION)
 			err(1, "parse failed - entered snapshot elem unexpectedely");
@@ -208,9 +209,9 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			else
 				err(1, "parse failed - non conforming attribute found in snapshot elem");
 		}
-		//Only add to the list if we are relevant
+		/* Only add to the list if we are relevant */
 		if (delta_uri && delta_hash && delta_serial) {
-			//TODO current use delta check expects current delta in list as well...
+			/* TODO current use delta check expects current delta in list as well... */
 			if (notification_xml->current_serial &&
 			    notification_xml->current_serial < delta_serial) {
 				struct delta_item *d = new_delta(delta_uri, delta_hash, delta_serial);
@@ -236,10 +237,8 @@ notification_elem_end(void *data, const char *el)
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
 			err(1, "parse failed - exited notification elem unexpectedely");
 		notification_xml->scope = NOTIFICATION_SCOPE_END;
-		//check the state to see if we have enough delta info
+		/* check the state to see if we have enough delta info */
 		check_state(notification_xml);
-		//print_notification_xml(notification_xml);
-		//printf("end %s\n", el);
 	} else if (strcmp("snapshot", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT)
 			err(1, "parse failed - exited snapshot elem unexpectedely");
@@ -247,7 +246,6 @@ notification_elem_end(void *data, const char *el)
 	} else if (strcmp("delta", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA)
 			err(1, "parse failed - exited delta elem unexpectedely");
-		//print_notification_xml(notification_xml);
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else
 		err(1, "parse failed - unexpected elem exit found");
@@ -268,14 +266,16 @@ save_notification_data(struct xmldata *xml_data)
 	FILE *f = fopen(notification_filename, "w");
 	if (f) {
 		struct notification_xml *nxml = xml_data->xml_data;
-		//TODO maybe this should actually come from the snapshot/deltas that get written
-		// might not matter if we have verified consistency already
+		/*
+		 * TODO maybe this should actually come from the snapshot/deltas that get written
+		 * might not matter if we have verified consistency already
+		 */
 		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
 		fclose(f);
 	}
 }
 
-/* XXXCJ dito */
+/* XXXCJ this needs more cleanup and error checking */
 static void
 fetch_existing_notification_data(struct xmldata *xml_data)
 {
@@ -323,7 +323,7 @@ new_notification_xml_data(char *uri, struct opts *opts)
 	xml_data->xml_data = (void*)new_notification_xml();
 	xml_data->uri = uri;
 	xml_data->opts = opts;
-	//no hash verification for notification file
+	/* no hash verification for notification file */
 	xml_data->hash = NULL;
 	fetch_existing_notification_data(xml_data);
 	xml_data->parser = XML_ParserCreate(NULL);

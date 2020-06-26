@@ -55,16 +55,6 @@ cleanopts(struct opts *o)
 	free(o);
 }
 
-//TODO stolen from rpki atm
-enum rtype {
-	RTYPE_EOF = 0,
-	RTYPE_TAL,
-	RTYPE_MFT,
-	RTYPE_ROA,
-	RTYPE_CER,
-	RTYPE_CRL
-};
-
 int b64_decode(char *src, unsigned char **b64) {
 	size_t sz;
 	int b64sz;
@@ -85,7 +75,17 @@ int b64_decode(char *src, unsigned char **b64) {
 	return b64sz;
 }
 
-//TODO stolen from rpki atm
+/* TODO stolen from rpki atm */
+enum rtype {
+	RTYPE_EOF = 0,
+	RTYPE_TAL,
+	RTYPE_MFT,
+	RTYPE_ROA,
+	RTYPE_CER,
+	RTYPE_CRL
+};
+
+/* TODO stolen from rpki atm */
 static int
 rsync_uri_parse(const char **hostp, size_t *hostsz,
     const char **modulep, size_t *modulesz,
