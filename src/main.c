@@ -43,6 +43,7 @@
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
  * - kill newOpts, cleanupopts use stack variable instead
  * - use openat, renameat, linkat, unlinkat etc instead of full pathes
+ * - check for memleaks (e.g. no call to XML_ParserFree())
  */
 
 static void
