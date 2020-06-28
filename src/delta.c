@@ -319,14 +319,23 @@ delta_content_handler(void *data, const char *content, int length)
 struct xmldata *
 new_delta_xml_data(char *uri, char *hash, struct opts *opts)
 {
-	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
+	struct xmldata *xml_data;
 
-	xml_data->xml_data = calloc(1, sizeof(struct delta_xml));
+	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
+		err(1, NULL);
+
+	if ((xml_data->xml_data = calloc(1, sizeof(struct delta_xml))) == NULL)
+		err(1, NULL);
+
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+
 	xml_data->parser = XML_ParserCreate(NULL);
-	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);
+	if (xml_data->parser == NULL)
+		err(1, "XML_ParserCreate");
+	XML_SetElementHandler(xml_data->parser, delta_elem_start,
+	    delta_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 
