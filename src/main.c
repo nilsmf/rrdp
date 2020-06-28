@@ -38,6 +38,11 @@
  * - exit early from xml parsing if we know we are ok already?
  * - start to handle errors better
  * - nice to have optimise with keep alives etc.
+
+ * - check for error of malloc/calloc and strdup functions
+ * - replace printf with more elaborate reporting (log_warn / log_debug...)
+ * - kill newOpts, cleanupopts use stack variable instead
+ * - use openat, renameat, linkat, unlinkat etc instead of full pathes
  */
 
 static void
