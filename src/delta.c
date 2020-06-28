@@ -138,6 +138,7 @@ verify_publish(struct xmldata *xml_data)
 	if (delta_xml->publish_hash)
 		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
 
+	fclose(f);
 	/*
 	 * TODO: turn this back on (and all the return statements in error cases)
 	 * return !strncmp(obuff_hex, delta->xml_publish_hash, SHA256_DIGEST_LENGTH*2);
