@@ -194,7 +194,7 @@ write_delta_withdraw(struct xmldata* xml_data)
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	FILE *f;
 	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
-		err(1, "file open error");
+		err(1, "file open error withdraw");
 	fclose(f);
 	return 0;
 }
