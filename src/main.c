@@ -27,9 +27,6 @@
 /*
  * - use If-Modified-Since header for notification requests
  * - handle network failures with retries
- * - ensure snapshot/notification serial must be greater than previous
- * - ensure mismatching session_ids between notification calls invoke a snapshot
- * - handle unordered deltas
  * - version in notification, snapshot and delta elems must always == 1
  * - oops dont verify withdraws atm
  * - enforce that withdraws have a hash
@@ -38,6 +35,7 @@
  * - exit early from xml parsing if we know we are ok already?
  * - start to handle errors better
  * - nice to have optimise with keep alives etc.
+ * - deal with withdraws (either ignore or leave as is)
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)

@@ -135,6 +135,8 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 		if (strcmp(snapshot_xml->nxml->session_id,
 		    snapshot_xml->session_id) != 0)
 			err(1, "parse failed - session_id mismatch");
+		if (snapshot_xml->nxml->serial != snapshot_xml->serial)
+			err(1, "parse failed - serial mismatch");
 
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
 	/*
