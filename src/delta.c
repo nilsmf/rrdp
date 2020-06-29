@@ -284,6 +284,9 @@ delta_elem_start(void *data, const char *el, const char **attr)
 		}
 		if (!delta_xml->publish_uri)
 			err(1, "parse failed - incomplete publish attributes");
+		if (strcmp("withdraw", el) == 0 && !delta_xml->publish_hash) {
+			err(1, "parse failed - incomplete withdraw attributes");
+		}
 		delta_xml->scope = DELTA_SCOPE_PUBLISH;
 	} else
 		err(1, "parse failed - unexpected elem exit found");
@@ -315,9 +318,10 @@ delta_elem_end(void *data, const char *el)
 		 * TODO should we never keep this much and stream it straight to
 		 * staging file?
 		 */
+		if (verify_publish(xml_data))
+			err(1, "failed to verify delta hash");
+
 		if (strcmp("publish", el) == 0) {
-			if (verify_publish(xml_data))
-				err(1, "failed to verify delta hash");
 			write_delta_publish(xml_data);
 		} else
 			write_delta_withdraw(xml_data);

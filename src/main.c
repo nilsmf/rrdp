@@ -27,15 +27,12 @@
 /*
  * - use If-Modified-Since header for notification requests
  * - handle network failures with retries
- * - oops dont verify withdraws atm
- * - enforce that withdraws have a hash
- * - validate hosts etc stay the same between calls / or only ever use the
- *   notification hostname for the folder location
- * - exit early from xml parsing if we know we are ok already?
  * - start to handle errors better
  * - nice to have optimise with keep alives etc.
  * - deal with withdraws (either ignore or leave as is)
  * - should we ensure versions match between calls?
+ * - exit early from xml parsing if we know we are ok already?
+ *   I think no since we need to make sure it is valid still...
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
