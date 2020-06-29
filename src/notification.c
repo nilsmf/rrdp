@@ -144,11 +144,11 @@ check_state(struct notification_xml *nxml)
 	}
 	/* all deltas present? */
 	if (serial_counter != serial_diff) {
-		printf("Mismatch for serial diff vs. actual in order serials");
+		printf("Mismatch for serial diff vs. actual in order serials\n");
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
-	printf("Happy to apply %d deltas", serial_counter);
+	printf("Happy to apply %d deltas\n", serial_counter);
 	/* All serials matched */
 	nxml->state = NOTIFICATION_STATE_DELTAS;
 }

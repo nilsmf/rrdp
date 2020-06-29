@@ -42,6 +42,7 @@ struct snapshot_xml {
 	char			*publish_uri;
 	char			*publish_data;
 	unsigned int		publish_data_length;
+	struct notification_xml	*nxml;
 };
 
 static void
@@ -59,8 +60,12 @@ open_snapshot_file(const char *publish_uri, const char *base_dir)
 {
 	if (!publish_uri)
 		err(1, "tried to write to defunct publish uri");
-	/* TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181 */
-	char *filename = generate_filename_from_uri(publish_uri, base_dir, NULL);
+	/*
+	 * TODO what are our max lengths? 4096 seems to be safe catchall
+	 * according to RFC-8181
+	 */
+	char *filename = generate_filename_from_uri(publish_uri, base_dir,
+	    NULL);
 
 	/* TODO quick and dirty getting path */
 	/* create dir if necessary */
@@ -80,7 +85,8 @@ write_snapshot_publish(struct xmldata *xml_data)
 	unsigned char *data_decoded;
 	int decoded_len = 0;
 	FILE *f;
-	if (!(f = open_snapshot_file(snapshot_xml->publish_uri, xml_data->opts->basedir_working)))
+	if (!(f = open_snapshot_file(snapshot_xml->publish_uri,
+	    xml_data->opts->basedir_working)))
 		err(1, "file open error");
 	/* decode b64 message */
 	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
@@ -99,10 +105,14 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	int i;
 
-	/* Can only enter here once as we should have no ways to get back to NONE scope */
+	/*
+	 * Can only enter here once as we should have no ways to get back to
+	 * NONE scope
+	 */
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE)
-			err(1, "parse failed - entered snapshot elem unexpectedely");
+			err(1, "parse failed - entered snapshot elem"
+			    "unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0)
 				snapshot_xml->xmlns = strdup(attr[i+1]);
@@ -111,30 +121,39 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 			else if (strcmp("session_id", attr[i]) == 0)
 				snapshot_xml->session_id = strdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
-				snapshot_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
+				snapshot_xml->serial =
+				    (int)strtol(attr[i+1],NULL,BASE10);
 			else
-				err(1, "parse failed - non conforming attribute found in snapshot elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in snapshot elem");
 		}
 		if (!(snapshot_xml->xmlns &&
 		      snapshot_xml->version &&
 		      snapshot_xml->session_id &&
 		      snapshot_xml->serial))
 			err(1, "parse failed - incomplete snapshot attributes");
+		if (strcmp(snapshot_xml->nxml->session_id,
+		    snapshot_xml->session_id) != 0)
+			err(1, "parse failed - session_id mismatch");
 
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
 	/*
-	 * Will enter here multiple times, BUT never nested. will start collecting character data in that handler
-	 * mem is cleared in end block, (TODO or on parse failure)
+	 * Will enter here multiple times, BUT never nested. will start
+	 * collecting character data in that handler mem is cleared in end
+	 * block, (TODO or on parse failure)
 	 */
 	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
-			err(1, "parse failed - entered publish elem unexpectedely");
+			err(1, "parse failed - entered publish "
+			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
 				snapshot_xml->publish_uri = strdup(attr[i+1]);
-			else if (strcmp("xmlns", attr[i]) == 0); /* XXX should we do nothing? */
+			else if (strcmp("xmlns", attr[i]) == 0);
+				/* XXX should we do nothing? */
 			else
-				err(1, "parse failed - non conforming attribute found in publish elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in publish elem");
 		}
 		if (!snapshot_xml->publish_uri)
 			err(1, "parse failed - incomplete publish attributes");
@@ -150,13 +169,16 @@ snapshot_elem_end(void *data, const char *el)
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	if (strcmp("snapshot", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
-			err(1, "parse failed - exited snapshot elem unexpectedely");
+			err(1, "parse failed - exited snapshot "
+			    "elem unexpectedely");
 		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
 	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH)
-			err(1, "parse failed - exited publish elem unexpectedely");
+			err(1, "parse failed - exited publish "
+			    "elem unexpectedely");
 		if (!snapshot_xml->publish_uri)
-			err(1, "parse failed - no data recovered from publish elem");
+			err(1, "parse failed - no data recovered "
+			    "from publish elem");
 		write_snapshot_publish(xml_data);
 		free(snapshot_xml->publish_uri);
 		snapshot_xml->publish_uri = NULL;
@@ -198,7 +220,8 @@ snapshot_content_handler(void *data, const char *content, int length)
 }
 
 struct xmldata *
-new_snapshot_xml_data(char *uri, char *hash, struct opts *opts)
+new_snapshot_xml_data(char *uri, char *hash, struct opts *opts,
+    struct notification_xml *nxml)
 {
 	struct xmldata *xml_data;
 
@@ -212,6 +235,7 @@ new_snapshot_xml_data(char *uri, char *hash, struct opts *opts)
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+	((struct snapshot_xml*)xml_data->xml_data)->nxml = nxml;
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)

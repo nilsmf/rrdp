@@ -14,6 +14,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifndef _NOTIFICATIONH_
+#define _NOTIFICATIONH_
+
 #include <stdio.h>
 #include <sys/queue.h>
 
@@ -68,3 +71,6 @@ void			print_notification_xml(struct notification_xml *);
 
 struct xmldata	*new_notification_xml_data(char *, struct opts *);
 void		save_notification_data(struct xmldata *);
+
+#endif
+

@@ -25,7 +25,6 @@
 #include "file_util.h"
 
 /*
- * - validate session_ids match notification files
  * - use If-Modified-Since header for notification requests
  * - handle network failures with retries
  * - ensure snapshot/notification serial must be greater than previous
@@ -34,7 +33,8 @@
  * - version in notification, snapshot and delta elems must always == 1
  * - oops dont verify withdraws atm
  * - enforce that withdraws have a hash
- * - validate hosts etc stay the same between calls / or only ever use the notification hostname for the folder location
+ * - validate hosts etc stay the same between calls / or only ever use the
+ *   notification hostname for the folder location
  * - exit early from xml parsing if we know we are ok already?
  * - start to handle errors better
  * - nice to have optimise with keep alives etc.
@@ -47,9 +47,10 @@
  */
 
 static void
-fetch_delta_xml(char *uri, char *hash, struct opts *opts)
-{
-	struct xmldata *delta_xml_data = new_delta_xml_data(uri, hash, opts);
+fetch_delta_xml(char *uri, char *hash, struct opts *opts,
+    struct notification_xml* nxml) {
+	struct xmldata *delta_xml_data =
+	    new_delta_xml_data(uri, hash, opts, nxml);
 	if (fetch_xml_uri(delta_xml_data) != 0)
 		err(1, "failed to curl");
 	/*
@@ -59,9 +60,10 @@ fetch_delta_xml(char *uri, char *hash, struct opts *opts)
 }
 
 static void
-fetch_snapshot_xml(char *uri, char *hash, struct opts *opts)
-{
-	struct xmldata *snapshot_xml_data = new_snapshot_xml_data(uri, hash, opts);
+fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
+    struct notification_xml* nxml) {
+	struct xmldata *snapshot_xml_data =
+	    new_snapshot_xml_data(uri, hash, opts, nxml);
 	if (fetch_xml_uri(snapshot_xml_data) != 0)
 		err(1, "failed to curl");
 	/*
@@ -92,16 +94,18 @@ fetch_notification_xml(char* uri, struct opts *opts)
 		case NOTIFICATION_STATE_DELTAS:
 			printf("fetching deltas\n");
 			while (!TAILQ_EMPTY(&(nxml->delta_q))) {
-				struct delta_item *d = TAILQ_FIRST(&(nxml->delta_q));
+				struct delta_item *d =
+				    TAILQ_FIRST(&(nxml->delta_q));
 				TAILQ_REMOVE(&(nxml->delta_q), d, q);
 				/* XXXCJ check that uri points to same host */
-				fetch_delta_xml(d->uri, d->hash, opts);
+				fetch_delta_xml(d->uri, d->hash, opts, nxml);
 				free_delta(d);
 			}
 			/*
-			 * TODO should we apply as many deltas as possible or roll them all back? (maybe an option?)
-			 * ie. do a mv_delta after each loop above
-			 * if failed to fetch/apply deltas then fallthrough to snapshot
+			 * TODO should we apply as many deltas as possible or
+			 * roll them all back? (maybe an option?) ie. do a
+			 * mv_delta after each loop above if failed to
+			 * fetch/apply deltas then fallthrough to snapshot
 			 */
 			if (!mv_delta(working_path, primary_path)) {
 				printf("delta migrate passed\n");
@@ -113,7 +117,8 @@ fetch_notification_xml(char* uri, struct opts *opts)
 		case NOTIFICATION_STATE_SNAPSHOT:
 			printf("fetching snapshot\n");
 			/* XXXCJ check that uri points to same host */
-			fetch_snapshot_xml(nxml->snapshot_uri, nxml->snapshot_hash, opts);
+			fetch_snapshot_xml(nxml->snapshot_uri,
+			    nxml->snapshot_hash, opts, nxml);
 			rm_dir(primary_path);
 			if (mv_delta(working_path, primary_path))
 				err(1, "failed to update");

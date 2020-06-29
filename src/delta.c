@@ -44,6 +44,7 @@ struct delta_xml {
 	char			*publish_hash;
 	char			*publish_data;
 	unsigned int		publish_data_length;
+	struct notification_xml	*nxml;
 };
 
 static void
@@ -68,10 +69,12 @@ get_hex_hash(FILE *f, char *obuff_hex)
 		SHA256_CTX ctx;
 		SHA256_Init(&ctx);
 		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f)))
-			SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
+			SHA256_Update(&ctx, (const u_int8_t *)read_buff,
+			    buff_len);
 		SHA256_Final(obuff, &ctx);
 		for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
-			sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
+			sprintf(obuff_hex + 2*n, "%02x",
+			    (unsigned int)obuff[n]);
 		return obuff_hex;
 	}
 	return NULL;
@@ -86,7 +89,8 @@ verify_publish(struct xmldata *xml_data)
 	FILE *f = NULL;
 	/* delta expects file to exist */
 	if (delta_xml->publish_hash) {
-		filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_primary, NULL);
+		filename = generate_filename_from_uri(delta_xml->publish_uri,
+		    xml_data->opts->basedir_primary, NULL);
 		printf("validating file: %s...", filename);
 		f = fopen(filename, "r");
 	}
@@ -97,13 +101,18 @@ verify_publish(struct xmldata *xml_data)
 		}
 		free(filename);
 		filename = NULL;
-		/* verify from working dir if not found in base in case of multiple applied deltas this run */
-		filename = generate_filename_from_uri(delta_xml->publish_uri, xml_data->opts->basedir_working, NULL);
+		/*
+		 * verify from working dir if not found in base in case of
+		 * multiple applied deltas this run
+		 */
+		filename = generate_filename_from_uri(delta_xml->publish_uri,
+		    xml_data->opts->basedir_working, NULL);
 		f = fopen(filename, "r");
 		if (!get_hex_hash(f, obuff_hex)) {
 			/* delta expected hash but was not found */
 			if (delta_xml->publish_hash) {
-				printf("2 didn't find expected hash for file %s\n", filename);
+				printf("2 didn't find expected hash for"
+				    "file %s\n", filename);
 				free(filename);
 				if (f)
 					fclose(f);
@@ -113,7 +122,8 @@ verify_publish(struct xmldata *xml_data)
 			}
 		/* delta didn't expect hash but was found */
 		} else if (!delta_xml->publish_hash) {
-			printf("2 found unexpected hash (%s) for file %s\n", obuff_hex, filename);
+			printf("2 found unexpected hash (%s) for file %s\n",
+			    obuff_hex, filename);
 			free(filename);
 			if (f)
 				fclose(f);
@@ -129,19 +139,22 @@ verify_publish(struct xmldata *xml_data)
 	} else if (!delta_xml->publish_hash) {
 		/* delta didn't expect hash but was found */
 		/* return 1; */
-		printf("1 found unexpected hash (%s) for file %s\n", obuff_hex, filename);
+		printf("1 found unexpected hash (%s) for file %s\n", obuff_hex,
+		    filename);
 		free(filename);
 		if (f)
 			fclose(f);
 		return 0;
 	}
 	if (delta_xml->publish_hash)
-		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
+		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex,
+		    delta_xml->publish_hash);
 
 	fclose(f);
 	/*
-	 * TODO: turn this back on (and all the return statements in error cases)
-	 * return !strncmp(obuff_hex, delta->xml_publish_hash, SHA256_DIGEST_LENGTH*2);
+	 * TODO: turn this back on (all the return statements in error cases)
+	 * return !strncmp(obuff_hex, delta->xml_publish_hash,
+	 * SHA256_DIGEST_LENGTH*2);
 	 */
 	return 0;
 }
@@ -151,7 +164,10 @@ open_delta_file(const char *publish_uri, const char *basedir)
 {
 	if (!publish_uri)
 		err(1, "tried to write to defunct publish uri");
-	/* TODO what are our max lengths? 4096 seems to be safe catchall according to RFC-8181 */
+	/*
+	 * TODO what are our max lengths? 4096 seems to be safe catchall
+	 * according to RFC-8181
+	 */
 	char *filename = generate_filename_from_uri(publish_uri, basedir, NULL);
 	/* TODO quick and dirty getting path */
 	/* create dir if necessary */
@@ -171,7 +187,8 @@ write_delta_publish(struct xmldata *xml_data)
 	unsigned char *data_decoded;
 	int decoded_len = 0;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
+	if (!(f = open_delta_file(delta_xml->publish_uri,
+	    xml_data->opts->basedir_working)))
 		err(1, "file open error");
 	/* decode b64 message */
 	decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
@@ -187,13 +204,16 @@ static int
 write_delta_withdraw(struct xmldata* xml_data)
 {
 	/*
-	 * TODO files to remove could be in working or primary. best way to solve?
-	 * I think adding the file as empty and then applying in order and then after applying to primary removing empty files should track correctly
+	 * TODO files to remove could be in working or primary. best way to
+	 * solve?
+	 * I think adding the file as empty and then applying in order and then
+	 * after applying to primary removing empty files should track correctly
 	 * or keep list in memory and append or remove as we progress...
 	 */
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
+	if (!(f = open_delta_file(delta_xml->publish_uri,
+	    xml_data->opts->basedir_working)))
 		err(1, "file open error withdraw");
 	fclose(f);
 	return 0;
@@ -206,10 +226,14 @@ delta_elem_start(void *data, const char *el, const char **attr)
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	int i;
 
-	/* Can only enter here once as we should have no ways to get back to NONE scope */
+	/*
+	 * Can only enter here once as we should have no ways to get back to
+	 * NONE scope
+	 */
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_NONE)
-			err(1, "parse failed - entered delta elem unexpectedely");
+			err(1, "parse failed - entered delta elem "
+			    "unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0)
 				delta_xml->xmlns = strdup(attr[i+1]);
@@ -218,32 +242,41 @@ delta_elem_start(void *data, const char *el, const char **attr)
 			else if (strcmp("session_id", attr[i]) == 0)
 				delta_xml->session_id = strdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
-				delta_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
+				delta_xml->serial =
+				    (int)strtol(attr[i+1],NULL,BASE10);
 			else
-				err(1, "parse failed - non conforming attribute found in delta elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in delta elem");
 		}
 		if (!(delta_xml->xmlns &&
 		      delta_xml->version &&
 		      delta_xml->session_id &&
 		      delta_xml->serial))
 			err(1, "parse failed - incomplete delta attributes");
+		if (strcmp(delta_xml->nxml->session_id, delta_xml->session_id)
+		    != 0)
+			err(1, "parse failed - session_id mismatch");
 
 		delta_xml->scope = DELTA_SCOPE_DELTA;
 	/*
-	 * Will enter here multiple times, BUT never nested. will start collecting character data in that handler
+	 * Will enter here multiple times, BUT never nested. will start
+	 * collecting character data in that handler
 	 * mem is cleared in end block, (TODO or on parse failure)
 	 */
 	} else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_DELTA)
-			err(1, "parse failed - entered publish elem unexpectedely");
+			err(1, "parse failed - entered publish "
+			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
 				delta_xml->publish_uri = strdup(attr[i+1]);
 			else if (strcmp("hash", attr[i]) == 0)
 				delta_xml->publish_hash = strdup(attr[i+1]);
-			else if (strcmp("xmlns", attr[i]) == 0); /* XXX should we do nothing? */
+			else if (strcmp("xmlns", attr[i]) == 0);
+				/* XXX should we do nothing? */
 			else
-				err(1, "parse failed - non conforming attribute found in publish elem");
+				err(1, "parse failed - non conforming attribute "
+				    "found in publish elem");
 		}
 		if (!delta_xml->publish_uri)
 			err(1, "parse failed - incomplete publish attributes");
@@ -259,16 +292,25 @@ delta_elem_end(void *data, const char *el)
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	if (strcmp("delta", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_DELTA)
-			err(1, "parse failed - exited delta elem unexpectedely");
+			err(1, "parse failed - exited delta "
+			    "elem unexpectedely");
 		delta_xml->scope = DELTA_SCOPE_END;
 	}
-	/* TODO does this allow <publish></withdraw> or is that caught by basic xml parsing */
+	/*
+	 * TODO does this allow <publish></withdraw> or is that caught by basic
+	 * xml parsing
+	 */
 	else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
 		if (delta_xml->scope != DELTA_SCOPE_PUBLISH)
-			err(1, "parse failed - exited publish elem unexpectedely");
+			err(1, "parse failed - exited publish "
+			    "elem unexpectedely");
 		if (!delta_xml->publish_uri)
-			err(1, "parse failed - no data recovered from publish elem");
-		/* TODO should we never keep this much and stream it straight to staging file? */
+			err(1, "parse failed - no data recovered from "
+			    "publish elem");
+		/*
+		 * TODO should we never keep this much and stream it straight to
+		 * staging file?
+		 */
 		if (strcmp("publish", el) == 0) {
 			if (verify_publish(xml_data))
 				err(1, "failed to verify delta hash");
@@ -317,7 +359,8 @@ delta_content_handler(void *data, const char *content, int length)
 }
 
 struct xmldata *
-new_delta_xml_data(char *uri, char *hash, struct opts *opts)
+new_delta_xml_data(char *uri, char *hash, struct opts *opts,
+    struct notification_xml *nxml)
 {
 	struct xmldata *xml_data;
 
@@ -330,6 +373,7 @@ new_delta_xml_data(char *uri, char *hash, struct opts *opts)
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+	((struct delta_xml*)xml_data->xml_data)->nxml = nxml;
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
