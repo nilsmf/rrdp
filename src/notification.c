@@ -111,6 +111,12 @@ check_state(struct notification_xml *nxml)
 		return;
 	}
 
+	/* No data and yet check_state was called */
+	if (nxml->session_id == NULL || nxml->serial == 0) {
+		nxml->state = NOTIFICATION_STATE_ERROR;
+		return;
+	}
+
 	/* New session available should go from snapshot */
 	if(strcmp(nxml->current_session_id, nxml->session_id) != 0) {
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
@@ -126,10 +132,10 @@ check_state(struct notification_xml *nxml)
 	}
 
 	if (serial_diff < 0) {
-		/* current serial is larger! go from snapshot */
+		/* current serial is larger! can't even go from snapshot */
 		printf("serial_diff is negative %d vs %d\n",
 		    nxml->serial, nxml->current_serial);
-		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
+		nxml->state = NOTIFICATION_STATE_ERROR;
 		return;
 	}
 
@@ -144,7 +150,8 @@ check_state(struct notification_xml *nxml)
 	}
 	/* all deltas present? */
 	if (serial_counter != serial_diff) {
-		printf("Mismatch for serial diff vs. actual in order serials\n");
+		printf("Mismatch for serial diff vs. "
+		       "actual in order serials\n");
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
@@ -160,12 +167,14 @@ print_notification_xml(struct notification_xml *notification_xml)
 	printf("state: %d\n", notification_xml->state);
 	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
 	printf("version: %s\n", notification_xml->version ?: "NULL");
-	printf("current_session_id: %s\n", notification_xml->current_session_id ?: "NULL");
+	printf("current_session_id: %s\n",
+	    notification_xml->current_session_id ?: "NULL");
 	printf("current_serial: %d\n", notification_xml->current_serial);
 	printf("session_id: %s\n", notification_xml->session_id ?: "NULL");
 	printf("serial: %d\n", notification_xml->serial);
 	printf("snapshot_uri: %s\n", notification_xml->snapshot_uri ?: "NULL");
-	printf("snapshot_hash: %s\n", notification_xml->snapshot_hash ?: "NULL");
+	printf("snapshot_hash: %s\n",
+	    notification_xml->snapshot_hash ?: "NULL");
 }
 
 static void
@@ -175,45 +184,58 @@ notification_elem_start(void *data, const char *el, const char **attr)
 	struct notification_xml *notification_xml = xml_data->xml_data;
 	int i;
 
-	/* Can only enter here once as we should have no ways to get back to START scope */
+	/*
+	 * Can only enter here once as we should have no ways to get back to
+	 * START scope
+	 */
 	if (strcmp("notification", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_START)
-			err(1, "parse failed - entered notification elem unexpectedely");
+			err(1, "parse failed - entered notification "
+			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0)
 				notification_xml->xmlns = strdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
 				notification_xml->version = strdup(attr[i+1]);
 			else if (strcmp("session_id", attr[i]) == 0)
-				notification_xml->session_id = strdup(attr[i+1]);
+				notification_xml->session_id =
+				    strdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
-				notification_xml->serial = (int)strtol(attr[i+1],NULL,BASE10);
+				notification_xml->serial =
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else
-				err(1, "parse failed - non conforming attribute found in notification elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in notification elem");
 		}
 		if (!(notification_xml->xmlns &&
 		      notification_xml->version &&
 		      notification_xml->session_id &&
 		      notification_xml->serial))
-			err(1, "parse failed - incomplete notification attributes");
+			err(1, "parse failed - incomplete "
+			    "notification attributes");
 
 		check_state(notification_xml);
 
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
 	/*
-	 * Will enter here multiple times, BUT never nested. will start collecting character data in that handler
+	 * Will enter here multiple times, BUT never nested. will start
+	 * collecting character data in that handler
 	 * mem is cleared in end block, (TODO or on parse failure)
 	 */
 	} else if (strcmp("snapshot", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION)
-			err(1, "parse failed - entered snapshot elem unexpectedely");
+			err(1, "parse failed - entered snapshot "
+			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
-				notification_xml->snapshot_uri = strdup(attr[i+1]);
+				notification_xml->snapshot_uri =
+				    strdup(attr[i+1]);
 			else if (strcmp("hash", attr[i]) == 0)
-				notification_xml->snapshot_hash = strdup(attr[i+1]);
+				notification_xml->snapshot_hash =
+				    strdup(attr[i+1]);
 			else
-				err(1, "parse failed - non conforming attribute found in snapshot elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in snapshot elem");
 		}
 		if (!notification_xml->snapshot_uri ||
 		    !notification_xml->snapshot_hash)
@@ -224,17 +246,21 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		const char *delta_hash = NULL;
 		int delta_serial = 0;
 
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
-			err(1, "parse failed - entered delta elem unexpectedely");
+		if (notification_xml->scope !=
+		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
+			err(1, "parse failed - entered delta "
+			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
 				delta_uri = attr[i+1];
 			else if (strcmp("hash", attr[i]) == 0)
 				delta_hash = attr[i+1];
 			else if (strcmp("serial", attr[i]) == 0)
-				delta_serial = (int)strtol(attr[i+1],NULL,BASE10);
+				delta_serial =
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else
-				err(1, "parse failed - non conforming attribute found in snapshot elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in snapshot elem");
 		}
 		/* Only add to the list if we are relevant */
 		if (!delta_uri || !delta_hash || !delta_serial)
@@ -259,19 +285,25 @@ notification_elem_end(void *data, const char *el)
 	struct notification_xml *notification_xml = xml_data->xml_data;
 
 	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
-			err(1, "parse failed - exited notification elem unexpectedely");
+		if (notification_xml->scope !=
+		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
+			err(1, "parse failed - exited notification "
+			    "elem unexpectedely");
 		notification_xml->scope = NOTIFICATION_SCOPE_END;
 		/* check the state to see if we have enough delta info */
 		check_state(notification_xml);
 	} else if (strcmp("snapshot", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT)
-			err(1, "parse failed - exited snapshot elem unexpectedely");
-		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
+			err(1, "parse failed - exited snapshot "
+			    "elem unexpectedely");
+		notification_xml->scope =
+		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else if (strcmp("delta", el) == 0) {
 		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA)
-			err(1, "parse failed - exited delta elem unexpectedely");
-		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
+			err(1, "parse failed - exited delta "
+			    "elem unexpectedely");
+		notification_xml->scope =
+		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 	} else
 		err(1, "parse failed - unexpected elem exit found");
 }
@@ -292,8 +324,9 @@ save_notification_data(struct xmldata *xml_data)
 	if (f) {
 		struct notification_xml *nxml = xml_data->xml_data;
 		/*
-		 * TODO maybe this should actually come from the snapshot/deltas that get written
-		 * might not matter if we have verified consistency already
+		 * TODO maybe this should actually come from the snapshot/deltas
+		 * that get written might not matter if we have verified
+		 * consistency already
 		 */
 		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
 		fclose(f);
@@ -330,8 +363,11 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 			if (l == 0)
 				nxml->current_session_id = strdup(line);
 			else if (l == 1) {
-				/* XXXCJ use strtonum here and maybe 64bit int */
-				nxml->current_serial = (int)strtol(line,NULL,BASE10);
+				/*
+				 * XXXCJ use strtonum here and maybe 64bit int
+				 */
+				nxml->current_serial =
+				    (int)strtol(line, NULL, BASE10);
 			}
 			l++;
 		}
