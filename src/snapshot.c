@@ -152,8 +152,7 @@ snapshot_elem_end(void *data, const char *el)
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 			err(1, "parse failed - exited snapshot elem unexpectedely");
 		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
-	}
-	else if (strcmp("publish", el) == 0) {
+	} else if (strcmp("publish", el) == 0) {
 		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH)
 			err(1, "parse failed - exited publish elem unexpectedely");
 		if (!snapshot_xml->publish_uri)
@@ -175,20 +174,25 @@ snapshot_content_handler(void *data, const char *content, int length)
 	int new_length;
 	struct xmldata *xml_data = data;
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+
 	if (snapshot_xml->scope == SNAPSHOT_SCOPE_PUBLISH) {
-		/* optmisiation atm this often gets called with '\n' as the only data... seems wasteful */
+		/*
+		 * optmisiation, this often gets called with '\n' as the
+		 * only data... seems wasteful
+		 */
 		if (length == 1 && content[0] == '\n')
 			return;
+
 		/* append content to publish_data */
-		if (snapshot_xml->publish_data) {
-			new_length = snapshot_xml->publish_data_length + length;
-			snapshot_xml->publish_data = realloc(snapshot_xml->publish_data, sizeof(char)*(new_length + 1));
-			strncpy(snapshot_xml->publish_data + snapshot_xml->publish_data_length, content, length);
-			snapshot_xml->publish_data[new_length] = '\0';
-		} else {
-			snapshot_xml->publish_data = strndup(content, length);
-			new_length = length;
-		}
+		new_length = snapshot_xml->publish_data_length + length;
+		snapshot_xml->publish_data = realloc(snapshot_xml->publish_data,
+		    new_length + 1);
+		if (snapshot_xml->publish_data == NULL)
+			err(1, "%s", __func__);
+
+		memcpy(snapshot_xml->publish_data +
+		    snapshot_xml->publish_data_length, content, length);
+		snapshot_xml->publish_data[new_length] = '\0';
 		snapshot_xml->publish_data_length = new_length;
 	}
 }
@@ -196,14 +200,24 @@ snapshot_content_handler(void *data, const char *content, int length)
 struct xmldata *
 new_snapshot_xml_data(char *uri, char *hash, struct opts *opts)
 {
-	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
+	struct xmldata *xml_data;
 
-	xml_data->xml_data = calloc(1, sizeof(struct snapshot_xml));
+	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
+		err(1, NULL);
+
+	if ((xml_data->xml_data = calloc(1, sizeof(struct snapshot_xml))) ==
+	    NULL)
+		err(1, NULL);
+
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+
 	xml_data->parser = XML_ParserCreate(NULL);
-	XML_SetElementHandler(xml_data->parser, snapshot_elem_start, snapshot_elem_end);
+	if (xml_data->parser == NULL)
+		err(1, "XML_ParserCreate");
+	XML_SetElementHandler(xml_data->parser, snapshot_elem_start,
+	    snapshot_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, snapshot_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 

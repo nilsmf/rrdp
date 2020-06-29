@@ -138,6 +138,7 @@ verify_publish(struct xmldata *xml_data)
 	if (delta_xml->publish_hash)
 		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex, delta_xml->publish_hash);
 
+	fclose(f);
 	/*
 	 * TODO: turn this back on (and all the return statements in error cases)
 	 * return !strncmp(obuff_hex, delta->xml_publish_hash, SHA256_DIGEST_LENGTH*2);
@@ -193,7 +194,7 @@ write_delta_withdraw(struct xmldata* xml_data)
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	FILE *f;
 	if (!(f = open_delta_file(delta_xml->publish_uri, xml_data->opts->basedir_working)))
-		err(1, "file open error");
+		err(1, "file open error withdraw");
 	fclose(f);
 	return 0;
 }
@@ -292,20 +293,25 @@ delta_content_handler(void *data, const char *content, int length)
 	int new_length;
 	struct xmldata *xml_data = data;
 	struct delta_xml *delta_xml = xml_data->xml_data;
+
 	if (delta_xml->scope == DELTA_SCOPE_PUBLISH) {
-		/* optmisiation atm this often gets called with '\n' as the only data... seems wasteful */
+		/*
+		 * optmisiation, this often gets called with '\n' as the
+		 * only data... seems wasteful
+		 */
 		if (length == 1 && content[0] == '\n')
 			return;
+
 		/* append content to publish_data */
-		if (delta_xml->publish_data) {
-			new_length = delta_xml->publish_data_length + length;
-			delta_xml->publish_data = realloc(delta_xml->publish_data, sizeof(char)*(new_length + 1));
-			strncpy(delta_xml->publish_data + delta_xml->publish_data_length, content, length);
-			delta_xml->publish_data[new_length] = '\0';
-		} else {
-			delta_xml->publish_data = strndup(content, length);
-			new_length = length;
-		}
+		new_length = delta_xml->publish_data_length + length;
+		delta_xml->publish_data = realloc(delta_xml->publish_data,
+		    sizeof(char)*(new_length + 1));
+		if (delta_xml->publish_data == NULL)
+			err(1, "%s", __func__);
+
+		memcpy(delta_xml->publish_data +
+		    delta_xml->publish_data_length, content, length);
+		delta_xml->publish_data[new_length] = '\0';
 		delta_xml->publish_data_length = new_length;
 	}
 }
@@ -313,14 +319,23 @@ delta_content_handler(void *data, const char *content, int length)
 struct xmldata *
 new_delta_xml_data(char *uri, char *hash, struct opts *opts)
 {
-	struct xmldata *xml_data = calloc(1, sizeof(struct xmldata));
+	struct xmldata *xml_data;
 
-	xml_data->xml_data = calloc(1, sizeof(struct delta_xml));
+	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
+		err(1, NULL);
+
+	if ((xml_data->xml_data = calloc(1, sizeof(struct delta_xml))) == NULL)
+		err(1, NULL);
+
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+
 	xml_data->parser = XML_ParserCreate(NULL);
-	XML_SetElementHandler(xml_data->parser, delta_elem_start, delta_elem_end);
+	if (xml_data->parser == NULL)
+		err(1, "XML_ParserCreate");
+	XML_SetElementHandler(xml_data->parser, delta_elem_start,
+	    delta_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 
