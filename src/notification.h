@@ -54,7 +54,7 @@ void			free_delta(struct delta_item *);
 struct notification_xml {
 	enum notification_scope	scope;
 	char			*xmlns;
-	char			*version;
+	int			version;
 	char			*session_id;
 	int			serial;
 	char			*current_session_id;

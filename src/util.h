@@ -18,6 +18,7 @@
 #define _UTILH_
 
 #define BASE10 10
+#define MAX_VERSION 1
 
 struct opts {
 	char *basedir_primary;

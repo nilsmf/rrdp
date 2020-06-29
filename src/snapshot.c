@@ -36,7 +36,7 @@ enum snapshot_scope {
 struct snapshot_xml {
 	enum snapshot_scope	scope;
 	char			*xmlns;
-	char			*version;
+	int			version;
 	char			*session_id;
 	int			serial;
 	char			*publish_uri;
@@ -50,7 +50,7 @@ print_snapshot_xml(struct snapshot_xml *snapshot_xml)
 {
 	printf("scope: %d\n", snapshot_xml->scope);
 	printf("xmlns: %s\n", snapshot_xml->xmlns ?: "NULL");
-	printf("version: %s\n", snapshot_xml->version ?: "NULL");
+	printf("version: %d\n", snapshot_xml->version);
 	printf("session_id: %s\n", snapshot_xml->session_id ?: "NULL");
 	printf("serial: %d\n", snapshot_xml->serial);
 }
@@ -117,12 +117,13 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 			if (strcmp("xmlns", attr[i]) == 0)
 				snapshot_xml->xmlns = strdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
-				snapshot_xml->version = strdup(attr[i+1]);
+				snapshot_xml->version =
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else if (strcmp("session_id", attr[i]) == 0)
 				snapshot_xml->session_id = strdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
 				snapshot_xml->serial =
-				    (int)strtol(attr[i+1],NULL,BASE10);
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else
 				err(1, "parse failed - non conforming "
 				    "attribute found in snapshot elem");
@@ -132,6 +133,9 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 		      snapshot_xml->session_id &&
 		      snapshot_xml->serial))
 			err(1, "parse failed - incomplete snapshot attributes");
+		if (snapshot_xml->version <= 0 ||
+		    snapshot_xml->version > MAX_VERSION)
+			err(1, "parse failed - invalid version");
 		if (strcmp(snapshot_xml->nxml->session_id,
 		    snapshot_xml->session_id) != 0)
 			err(1, "parse failed - session_id mismatch");

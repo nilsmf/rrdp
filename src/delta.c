@@ -37,7 +37,7 @@ enum delta_scope {
 struct delta_xml {
 	enum delta_scope	scope;
 	char			*xmlns;
-	char			*version;
+	int			version;
 	char			*session_id;
 	int			serial;
 	char			*publish_uri;
@@ -52,7 +52,7 @@ print_delta_xml(struct delta_xml *delta_xml)
 {
 	printf("scope: %d\n", delta_xml->scope);
 	printf("xmlns: %s\n", delta_xml->xmlns ?: "NULL");
-	printf("version: %s\n", delta_xml->version ?: "NULL");
+	printf("version: %d\n", delta_xml->version);
 	printf("session_id: %s\n", delta_xml->session_id ?: "NULL");
 	printf("serial: %d\n", delta_xml->serial);
 }
@@ -238,12 +238,13 @@ delta_elem_start(void *data, const char *el, const char **attr)
 			if (strcmp("xmlns", attr[i]) == 0)
 				delta_xml->xmlns = strdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
-				delta_xml->version = strdup(attr[i+1]);
+				delta_xml->version =
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else if (strcmp("session_id", attr[i]) == 0)
 				delta_xml->session_id = strdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
 				delta_xml->serial =
-				    (int)strtol(attr[i+1],NULL,BASE10);
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else
 				err(1, "parse failed - non conforming "
 				    "attribute found in delta elem");
@@ -253,6 +254,9 @@ delta_elem_start(void *data, const char *el, const char **attr)
 		      delta_xml->session_id &&
 		      delta_xml->serial))
 			err(1, "parse failed - incomplete delta attributes");
+		if (delta_xml->version <= 0 ||
+		    delta_xml->version > MAX_VERSION)
+			err(1, "parse failed - invalid version");
 		if (strcmp(delta_xml->nxml->session_id, delta_xml->session_id)
 		    != 0)
 			err(1, "parse failed - session_id mismatch");

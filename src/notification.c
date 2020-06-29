@@ -80,7 +80,6 @@ free_notification_xml(struct notification_xml *nxml)
 {
 	if (nxml) {
 		free(nxml->xmlns);
-		free(nxml->version);
 		free(nxml->session_id);
 		free(nxml->snapshot_uri);
 		free(nxml->snapshot_hash);
@@ -166,7 +165,7 @@ print_notification_xml(struct notification_xml *notification_xml)
 	printf("scope: %d\n", notification_xml->scope);
 	printf("state: %d\n", notification_xml->state);
 	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
-	printf("version: %s\n", notification_xml->version ?: "NULL");
+	printf("version: %d\n", notification_xml->version);
 	printf("current_session_id: %s\n",
 	    notification_xml->current_session_id ?: "NULL");
 	printf("current_serial: %d\n", notification_xml->current_serial);
@@ -196,7 +195,8 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			if (strcmp("xmlns", attr[i]) == 0)
 				notification_xml->xmlns = strdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
-				notification_xml->version = strdup(attr[i+1]);
+				notification_xml->version =
+				    (int)strtol(attr[i+1], NULL, BASE10);
 			else if (strcmp("session_id", attr[i]) == 0)
 				notification_xml->session_id =
 				    strdup(attr[i+1]);
@@ -214,6 +214,9 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			err(1, "parse failed - incomplete "
 			    "notification attributes");
 
+		if (notification_xml->version <= 0 ||
+		    notification_xml->version > MAX_VERSION)
+			err(1, "parse failed - invalid version");
 		check_state(notification_xml);
 
 		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;

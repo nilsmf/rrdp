@@ -27,7 +27,6 @@
 /*
  * - use If-Modified-Since header for notification requests
  * - handle network failures with retries
- * - version in notification, snapshot and delta elems must always == 1
  * - oops dont verify withdraws atm
  * - enforce that withdraws have a hash
  * - validate hosts etc stay the same between calls / or only ever use the
@@ -36,6 +35,7 @@
  * - start to handle errors better
  * - nice to have optimise with keep alives etc.
  * - deal with withdraws (either ignore or leave as is)
+ * - should we ensure versions match between calls?
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
