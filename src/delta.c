@@ -57,106 +57,76 @@ print_delta_xml(struct delta_xml *delta_xml)
 	printf("serial: %d\n", delta_xml->serial);
 }
 
-static char *
-get_hex_hash(FILE *f, char *obuff_hex)
+enum validate_return {
+	VALIDATE_RETURN_NO_FILE,
+	VALIDATE_RETURN_FILE_DEL,
+	VALIDATE_RETURN_HASH_MISMATCH,
+	VALIDATE_RETURN_HASH_MATCH
+};
+
+
+static enum validate_return
+validate_publish_hash(char *filename, char *hash)
 {
 	int BUFF_SIZE = 200;
-	int n;
 	char read_buff[BUFF_SIZE];
 	size_t buff_len;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	if (f && obuff_hex) {
-		SHA256_CTX ctx;
-		SHA256_Init(&ctx);
-		while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f)))
-			SHA256_Update(&ctx, (const u_int8_t *)read_buff,
-			    buff_len);
-		SHA256_Final(obuff, &ctx);
-		for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
-			sprintf(obuff_hex + 2*n, "%02x",
-			    (unsigned int)obuff[n]);
-		return obuff_hex;
+	unsigned char bin_hash[SHA256_DIGEST_LENGTH];
+	int first_read = 1;
+	FILE *f = fopen(filename, "r");
+	printf("validating file: %s...\n", filename);
+	if (!f)
+		return VALIDATE_RETURN_NO_FILE;
+	SHA256_CTX ctx;
+	SHA256_Init(&ctx);
+	while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f))) {
+		/* empty file = withdrawn */
+		if (first_read && buff_len == 0) {
+			fclose(f);
+			return VALIDATE_RETURN_FILE_DEL;
+		}
+		SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
 	}
-	return NULL;
+	fclose(f);
+	if (!SHA256_Final(obuff, &ctx) || !hash ||
+	    strlen(hash) < 2*SHA256_DIGEST_LENGTH)
+		return VALIDATE_RETURN_HASH_MISMATCH;
+	for (int n = 0; n < SHA256_DIGEST_LENGTH; n++) {
+		if (sscanf(&hash[2*n], "%2hhx", &bin_hash[n]) != 1)
+			return VALIDATE_RETURN_HASH_MISMATCH;
+	}
+	if (!memcmp(bin_hash, obuff, SHA256_DIGEST_LENGTH))
+		return VALIDATE_RETURN_HASH_MATCH;
+	return VALIDATE_RETURN_HASH_MISMATCH;
 }
 
 static int
 verify_publish(struct xmldata *xml_data)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
-	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	char *filename = NULL;
-	FILE *f = NULL;
-	/* delta expects file to exist */
-	if (delta_xml->publish_hash) {
+	enum validate_return v_return;
+	/* Check working dir first */
+	filename = generate_filename_from_uri(delta_xml->publish_uri,
+	    xml_data->opts->basedir_working, NULL);
+	v_return = validate_publish_hash(filename, delta_xml->publish_hash);
+	/* Check the primary dir if we haven't seen the file this delta run */
+	if (v_return == VALIDATE_RETURN_NO_FILE) {
+		free(filename);
 		filename = generate_filename_from_uri(delta_xml->publish_uri,
 		    xml_data->opts->basedir_primary, NULL);
-		printf("validating file: %s...", filename);
-		f = fopen(filename, "r");
-	}
-	if (!get_hex_hash(f, obuff_hex)) {
-		if (f) {
-			fclose(f);
-			f = NULL;
-		}
-		free(filename);
-		filename = NULL;
-		/*
-		 * verify from working dir if not found in base in case of
-		 * multiple applied deltas this run
-		 */
-		filename = generate_filename_from_uri(delta_xml->publish_uri,
-		    xml_data->opts->basedir_working, NULL);
-		f = fopen(filename, "r");
-		if (!get_hex_hash(f, obuff_hex)) {
-			/* delta expected hash but was not found */
-			if (delta_xml->publish_hash) {
-				printf("2 didn't find expected hash for"
-				    "file %s\n", filename);
-				free(filename);
-				if (f)
-					fclose(f);
-				/* return 1; */
-				fflush(stdout);
-				return 0;
-			}
-		/* delta didn't expect hash but was found */
-		} else if (!delta_xml->publish_hash) {
-			printf("2 found unexpected hash (%s) for file %s\n",
-			    obuff_hex, filename);
-			free(filename);
-			if (f)
-				fclose(f);
-			/* return 1; */
-			fflush(stdout);
-			err(1, "omg");
-			return 0;
-		}
-
-		free(filename);
-		if (f)
-			fclose(f);
-	} else if (!delta_xml->publish_hash) {
-		/* delta didn't expect hash but was found */
-		/* return 1; */
-		printf("1 found unexpected hash (%s) for file %s\n", obuff_hex,
-		    filename);
-		free(filename);
-		if (f)
-			fclose(f);
-		return 0;
-	}
-	if (delta_xml->publish_hash)
-		printf("old: %s\nvs\nexpected hash:%s\n", obuff_hex,
+		v_return = validate_publish_hash(filename,
 		    delta_xml->publish_hash);
-
-	fclose(f);
-	/*
-	 * TODO: turn this back on (all the return statements in error cases)
-	 * return !strncmp(obuff_hex, delta->xml_publish_hash,
-	 * SHA256_DIGEST_LENGTH*2);
-	 */
-	return 0;
+	}
+	free(filename);
+	/* delta expects file to exist and match */
+	if (delta_xml->publish_hash) {
+		return v_return == VALIDATE_RETURN_HASH_MATCH;
+	/* delta expects file to not exist (or have been deleted) */
+	} else {
+		return v_return <= VALIDATE_RETURN_FILE_DEL;
+	}
 }
 
 static FILE *
@@ -279,8 +249,8 @@ delta_elem_start(void *data, const char *el, const char **attr)
 			else if (strcmp("xmlns", attr[i]) == 0);
 				/* XXX should we do nothing? */
 			else
-				err(1, "parse failed - non conforming attribute "
-				    "found in publish elem");
+				err(1, "parse failed - non conforming "
+				    "attribute found in publish elem");
 		}
 		if (!delta_xml->publish_uri)
 			err(1, "parse failed - incomplete publish attributes");
@@ -318,7 +288,7 @@ delta_elem_end(void *data, const char *el)
 		 * TODO should we never keep this much and stream it straight to
 		 * staging file?
 		 */
-		if (verify_publish(xml_data))
+		if (!verify_publish(xml_data))
 			err(1, "failed to verify delta hash");
 
 		if (strcmp("publish", el) == 0) {

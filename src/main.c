@@ -33,6 +33,8 @@
  * - should we ensure versions match between calls?
  * - exit early from xml parsing if we know we are ok already?
  *   I think no since we need to make sure it is valid still...
+ * - curl -> ftp
+ * - dont allow basedirs outside our dirs (check for ..)
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
@@ -84,6 +86,7 @@ fetch_notification_xml(char* uri, struct opts *opts)
 		case NOTIFICATION_STATE_ERROR:
 			err(1, "NOTIFICATION_STATE_ERROR");
 		case NOTIFICATION_STATE_NONE:
+			rm_dir(working_path);
 			printf("up to date\n");
 			return;
 		case NOTIFICATION_STATE_DELTAS:
