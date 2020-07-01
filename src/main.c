@@ -78,14 +78,12 @@ fetch_notification_xml(char* uri, struct opts *opts)
 
 	if (nxml) {
 		print_notification_xml(nxml);
-		char *primary_path = opts->basedir_primary;
-		char *working_path = opts->basedir_working;
 
 		switch (nxml->state) {
 		case NOTIFICATION_STATE_ERROR:
 			err(1, "NOTIFICATION_STATE_ERROR");
 		case NOTIFICATION_STATE_NONE:
-			rm_dir(working_path);
+			rm_dir(opts->basedir_working);
 			printf("up to date\n");
 			return;
 		case NOTIFICATION_STATE_DELTAS:
@@ -104,11 +102,12 @@ fetch_notification_xml(char* uri, struct opts *opts)
 			 * mv_delta after each loop above if failed to
 			 * fetch/apply deltas then fallthrough to snapshot
 			 */
-			if (!mv_delta(working_path, primary_path)) {
+			if (!mv_delta(opts->basedir_working,
+			    opts->basedir_primary)) {
 				printf("delta migrate passed\n");
 				break;
 			}
-			rm_dir(working_path);
+			rm_dir(opts->basedir_working);
 			printf("delta move failed going to snapshot\n");
 			/* FALLTHROUGH */
 		case NOTIFICATION_STATE_SNAPSHOT:
@@ -116,8 +115,9 @@ fetch_notification_xml(char* uri, struct opts *opts)
 			/* XXXCJ check that uri points to same host */
 			fetch_snapshot_xml(nxml->snapshot_uri,
 			    nxml->snapshot_hash, opts, nxml);
-			rm_dir(primary_path);
-			if (mv_delta(working_path, primary_path))
+			rm_dir(opts->basedir_primary);
+			if (mv_delta(opts->basedir_working,
+			    opts->basedir_primary))
 				err(1, "failed to update");
 		}
 		save_notification_data(xml_data);

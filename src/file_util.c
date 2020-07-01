@@ -61,10 +61,13 @@ rm_dir(char *dir)
 	printf("deleting %s\n", dir);
 
 	while ((node = fts_read(tree))) {
-		//clear "from" directories as leave them
+		/* clear "from" directories as leave them */
 		if (node->fts_info & FTS_D)
 			continue;
-		// perhaps unlink would be enough for everything but this is more sure
+		/*
+		 * perhaps unlink would be enough for everything but this is
+		 * more sure
+		 */
 		if (node->fts_info & FTS_DP) {
 			printf("removing path %s\n", node->fts_path);
 			if(rmdir(node->fts_path)) {
@@ -101,12 +104,12 @@ mv_delta(char *from, char *to)
 	printf("migrating %s -> %s\n", from, to);
 
 	while ((node = fts_read(tree))) {
-		//replace "from" with "to"
+		/* replace "from" with "to" */
 		if (asprintf(&newpath, "%s%s", to, node->fts_path + from_len)
 		    == -1)
 			err(1, "asprintf");
 
-		//create dirs in "to" as we discover them
+		/* create dirs in "to" as we discover them */
 		if (node->fts_info & FTS_D) {
 			printf("making path %s\n", newpath);
 			if (mkpath(newpath, 0777)) {
@@ -116,7 +119,7 @@ mv_delta(char *from, char *to)
 			}
 			continue;
 		}
-		//clear "from" directories as leave them
+		/* clear "from" directories as leave them */
 		if (node->fts_info & FTS_DP) {
 			printf("removing path %s\n", node->fts_path);
 			if (rmdir(node->fts_path)) {
@@ -126,20 +129,22 @@ mv_delta(char *from, char *to)
 			}
 			continue;
 		}
-		//TODO probably unlink anything we dont want to copy?
-		if (!(node->fts_info & FTS_F) || !(node->fts_info & (FTS_NS|FTS_NSOK)))
+		/* TODO probably unlink anything we dont want to copy? */
+		if (!(node->fts_info & FTS_F) ||
+		    !(node->fts_info & (FTS_NS|FTS_NSOK)))
 			continue;
-		//zero sized files are delta "withdraws"
+		/* zero sized files are delta "withdraws" */
 		if (node->fts_statp->st_size == 0) {
 			if(unlink(node->fts_path)) {
 				printf("failed to delete %s\n", node->fts_path);
 				free(newpath);
 				return 1;
 			}
-		//otherwise move the file to the new location
+		/* otherwise move the file to the new location */
 		} else {
 			if(rename(node->fts_path, newpath)) {
-				printf("failed to move %s to %s \n", node->fts_path, newpath);
+				printf("failed to move %s to %s \n",
+				    node->fts_path, newpath);
 				free(newpath);
 				return 1;
 			}
