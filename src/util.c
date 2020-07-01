@@ -30,31 +30,6 @@
 
 #include "util.h"
 
-struct opts *
-newOpt(char *basedir_primary, char *basedir_working)
-{
-	if (!(basedir_primary || basedir_working)) {
-		printf("basedir not set\n");
-		return NULL;
-	}
-	if (!strcmp(basedir_primary, basedir_working)) {
-		printf("working and primary directories are the same\n");
-		return NULL;
-	}
-	struct opts *o = malloc(sizeof(struct opts));
-	o->basedir_primary = basedir_primary;
-	o->basedir_working = basedir_working;
-	return o;
-}
-
-void
-cleanopts(struct opts *o)
-{
-	free(o->basedir_primary);
-	free(o->basedir_working);
-	free(o);
-}
-
 int b64_decode(char *src, unsigned char **b64) {
 	size_t sz;
 	int b64sz;

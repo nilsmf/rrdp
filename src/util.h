@@ -25,9 +25,6 @@ struct opts {
 	char *basedir_working;
 };
 
-struct opts	*newOpt(char *, char *);
-void		 cleanopts(struct opts *);
-
 int	b64_decode(char *, unsigned char **);
 
 char	*generate_basepath_from_uri(const char *, const char *, const char *);

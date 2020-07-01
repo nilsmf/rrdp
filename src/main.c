@@ -38,7 +38,6 @@
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
- * - kill newOpts, cleanupopts use stack variable instead
  * - use openat, renameat, linkat, unlinkat etc instead of full pathes
  * - check for memleaks (e.g. no call to XML_ParserFree())
  */
@@ -136,7 +135,7 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-	struct opts *opts;
+	struct opts opts;
 	char *cachedir = "/tmp/rrdp";
 	char *uri, *basedir, *workdir;
 	int opt;
@@ -165,7 +164,7 @@ main(int argc, char **argv)
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
 	workdir = make_workdir(basedir);
 
-	opts = newOpt(basedir, workdir);
-	fetch_notification_xml(uri, opts);
-	cleanopts(opts);
+	opts.basedir_primary = basedir;
+	opts.basedir_working = workdir;
+	fetch_notification_xml(uri, &opts);
 }
