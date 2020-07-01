@@ -117,13 +117,13 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	/* Case-insensitive rsync URI. */
 
 	if (strncasecmp(uri, proto, strlen(proto))) {
-		warnx("%s: not using rsync schema", uri);
+		warnx("%s: not using %s schema", uri, proto);
 		return 0;
 	}
 
 	/* Parse the non-zero-length hostname. */
 
-	host = uri + 8;
+	host = uri + strlen(proto);
 
 	if ((module = strchr(host, '/')) == NULL) {
 		warnx("%s: missing rsync module", uri);
@@ -215,19 +215,20 @@ char *
 generate_filename_from_uri(const char *uri, const char *base_path,
     const char *proto)
 {
-	const char *path;
-	size_t pathsz;
+	const char *path, *module;
+	size_t pathsz, modulesz;
 	char *filename;
 
 	if (!uri || !base_path)
 		err(1, "tried to write to defunct publish uri");
 	if (rsync_uri_parse(NULL, NULL,
-			    NULL, NULL,
+			    &module, &modulesz,
 			    &path, &pathsz,
 			    NULL, uri, proto) == 0)
 		err(1, "parse uri elem fail");
 
-	if (asprintf(&filename, "%s/%.*s", base_path,
+	if (asprintf(&filename, "%s/%.*s/%.*s", base_path,
+	    (int)modulesz, module,
 	    (int)pathsz, path) == -1)
 		err(1, "asprintf");
 
