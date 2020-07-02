@@ -15,13 +15,15 @@
  */
 
 #include <string.h>
-
+#include <fcntl.h>
 #include <unistd.h>
 #include <err.h>
+#include <errno.h>
 
 #include <expat.h>
 
 #include "notification.h"
+#include "file_util.h"
 
 static void
 add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
@@ -315,71 +317,67 @@ notification_elem_end(void *data, const char *el)
 void
 save_notification_data(struct xmldata *xml_data)
 {
-	char *notification_filename;
+	int fd;
+	FILE *f;
+	struct notification_xml *nxml = xml_data->xml_data;
 
-	if (asprintf(&notification_filename, "%s/.state",
-	    xml_data->opts->basedir_primary) == -1)
+	printf("saving %s/%s\n", xml_data->opts->basedir_primary,
+	    STATE_FILENAME);
+
+	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
+	    O_WRONLY|O_CREAT|O_TRUNC, ALL_RW_MODE);
+	if (fd < 0 || !(f = fdopen(fd, "w")))
 		err(1, "%s", __func__);
-
-	printf("saving %s\n", notification_filename);
-
-	FILE *f = fopen(notification_filename, "w");
-	if (f) {
-		struct notification_xml *nxml = xml_data->xml_data;
-		/*
-		 * TODO maybe this should actually come from the snapshot/deltas
-		 * that get written might not matter if we have verified
-		 * consistency already
-		 */
-		fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
-		fclose(f);
-	}
+	/*
+	 * TODO maybe this should actually come from the snapshot/deltas that
+	 * get written might not matter if we have verified consistency already
+	 */
+	fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
+	fclose(f);
 }
 
 /* XXXCJ this needs more cleanup and error checking */
 static void
 fetch_existing_notification_data(struct xmldata *xml_data)
 {
-	char *notification_filename;
+	int fd;
+	FILE *f;
+	struct notification_xml *nxml = xml_data->xml_data;
 	char *line = NULL;
 	size_t len = 0;
-	FILE *f;
+	ssize_t s;
+	int l = 0;
 
-	if (asprintf(&notification_filename, "%s/.state",
-	    xml_data->opts->basedir_primary) == -1)
-		err(1, "%s", __func__);
+	printf("investigating %s/%s\n", xml_data->opts->basedir_primary,
+	    STATE_FILENAME);
 
-	printf("investigating %s\n", notification_filename);
-	fflush(stdout);
-	f = fopen(notification_filename, "r");
-	if (f) {
-		struct notification_xml *nxml = xml_data->xml_data;
-		ssize_t s;
-		int l = 0;
+	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME, O_RDONLY);
+	if (fd < 0 || !(f = fdopen(fd, "r"))) {
+		printf("no state file found %d\n", fd);
+		return;
+	}
 
-		while (l < 2 && (s = getline(&line, &len, f)) != -1) {
-			if (s < 1) {
-				printf("bad notification file\n");
-				break;
-			}
-			line[s - 1] = '\0';
-			if (l == 0)
-				nxml->current_session_id = strdup(line);
-			else if (l == 1) {
-				/*
-				 * XXXCJ use strtonum here and maybe 64bit int
-				 */
-				nxml->current_serial =
-				    (int)strtol(line, NULL, BASE10);
-			}
-			l++;
+	while (l < 2 && (s = getline(&line, &len, f)) != -1) {
+		/* must have at least 1 char serial / session */
+		if (s <= 1) {
+			fclose(f);
+			printf("bad notification file\n");
+			return;
 		}
-		printf("current session %s\ncurrent serial %d\n",
-		    nxml->current_session_id, nxml->current_serial);
-		fclose(f);
-	} else
-		printf("no file %s found", notification_filename);
-	free(notification_filename);
+		line[s - 1] = '\0';
+		if (l == 0)
+			nxml->current_session_id = strdup(line);
+		else if (l == 1) {
+			/*
+			 * XXXCJ use strtonum here and maybe 64bit int
+			 */
+			nxml->current_serial = (int)strtol(line, NULL, BASE10);
+		}
+		l++;
+	}
+	printf("current session %s\ncurrent serial %d\n",
+	    nxml->current_session_id ?: "NULL", nxml->current_serial);
+	fclose(f);
 }
 
 struct xmldata *

@@ -18,6 +18,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <err.h>
+#include <fcntl.h>
 
 #include "notification.h"
 #include "snapshot.h"
@@ -41,6 +42,21 @@
  * - use openat, renameat, linkat, unlinkat etc instead of full pathes
  * - check for memleaks (e.g. no call to XML_ParserFree())
  */
+
+static int
+rm_working_dir(struct opts *opts) {
+	if (close(opts->working_dir))
+		err(1, __func__);
+	return rm_dir(opts->basedir_working, 0);
+}
+
+static int
+rm_primary_dir(struct opts *opts) {
+	/*
+	 * Don't delete the primary dir itself. It has an open fd we will use.
+	 */
+	return rm_dir(opts->basedir_primary, 1);
+}
 
 static void
 fetch_delta_xml(char *uri, char *hash, struct opts *opts,
@@ -83,7 +99,7 @@ fetch_notification_xml(char* uri, struct opts *opts)
 		case NOTIFICATION_STATE_ERROR:
 			err(1, "NOTIFICATION_STATE_ERROR");
 		case NOTIFICATION_STATE_NONE:
-			rm_dir(opts->basedir_working);
+			rm_working_dir(opts);
 			printf("up to date\n");
 			return;
 		case NOTIFICATION_STATE_DELTAS:
@@ -107,7 +123,7 @@ fetch_notification_xml(char* uri, struct opts *opts)
 				printf("delta migrate passed\n");
 				break;
 			}
-			rm_dir(opts->basedir_working);
+			rm_working_dir(opts);
 			printf("delta move failed going to snapshot\n");
 			/* FALLTHROUGH */
 		case NOTIFICATION_STATE_SNAPSHOT:
@@ -115,7 +131,7 @@ fetch_notification_xml(char* uri, struct opts *opts)
 			/* XXXCJ check that uri points to same host */
 			fetch_snapshot_xml(nxml->snapshot_uri,
 			    nxml->snapshot_hash, opts, nxml);
-			rm_dir(opts->basedir_primary);
+			rm_primary_dir(opts);
 			if (mv_delta(opts->basedir_working,
 			    opts->basedir_primary))
 				err(1, "failed to update");
@@ -137,7 +153,8 @@ main(int argc, char **argv)
 {
 	struct opts opts;
 	char *cachedir = "/tmp/rrdp";
-	char *uri, *basedir, *workdir;
+	char *uri = NULL;
+	char *basedir, *workdir;
 	int opt;
 
 	while ((opt = getopt(argc, argv, "d:")) != -1) {
@@ -162,9 +179,17 @@ main(int argc, char **argv)
 		usage();
 
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
+	mkpath(basedir, ALL_RWX_MODE);
 	workdir = make_workdir(basedir);
-
 	opts.basedir_primary = basedir;
 	opts.basedir_working = workdir;
+	opts.primary_dir = open(opts.basedir_primary, O_RDONLY|O_DIRECTORY);
+	if (opts.primary_dir < 0)
+		err(1, "failed to open dir: %s", basedir);
+	opts.working_dir = open(opts.basedir_working, O_RDONLY|O_DIRECTORY);
+	if (opts.working_dir < 0)
+		err(1, "failed to open dir: %s", workdir);
+
 	fetch_notification_xml(uri, &opts);
+	free(workdir);
 }

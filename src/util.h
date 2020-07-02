@@ -23,6 +23,8 @@
 struct opts {
 	char *basedir_primary;
 	char *basedir_working;
+	int primary_dir;
+	int working_dir;
 };
 
 int	b64_decode(char *, unsigned char **);

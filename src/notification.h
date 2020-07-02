@@ -23,6 +23,8 @@
 #include "util.h"
 #include "fetch_util.h"
 
+#define STATE_FILENAME ".state"
+
 enum notification_scope {
 	NOTIFICATION_SCOPE_START,
 	NOTIFICATION_SCOPE_NOTIFICATION,

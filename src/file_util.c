@@ -47,7 +47,7 @@ mkpath(char *dir, mode_t mode)
 }
 
 int
-rm_dir(char *dir)
+rm_dir(char *dir, int min_del_level)
 {
 	FTSENT *node;
 	FTS *tree;
@@ -69,6 +69,9 @@ rm_dir(char *dir)
 		 * more sure
 		 */
 		if (node->fts_info & FTS_DP) {
+			if(node->fts_level < min_del_level)
+				continue;
+
 			printf("removing path %s\n", node->fts_path);
 			if(rmdir(node->fts_path)) {
 				printf("failed to delete %s\n", node->fts_path);
@@ -84,7 +87,7 @@ rm_dir(char *dir)
 	return 0;
 }
 
-
+/* XXXNF this also deletes the directory being copied */
 int
 mv_delta(char *from, char *to)
 {
@@ -99,8 +102,10 @@ mv_delta(char *from, char *to)
 	from_len = strlen(from);
 
 	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
-	if (!tree)
+	if (!tree) {
+		printf("failed to open tree\n");
 		return 1;
+	}
 	printf("migrating %s -> %s\n", from, to);
 
 	while ((node = fts_read(tree))) {
