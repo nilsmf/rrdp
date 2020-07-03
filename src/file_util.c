@@ -28,7 +28,7 @@
 #include "file_util.h"
 
 int
-mkpath(char *dir, mode_t mode)
+mkpath(const char *dir, mode_t mode)
 {
 	struct stat sb;
 

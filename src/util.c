@@ -27,8 +27,10 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <libgen.h>
+#include <fcntl.h>
 
 #include "util.h"
+#include "file_util.h"
 
 int b64_decode(char *src, unsigned char **b64) {
 	size_t sz;
@@ -186,28 +188,66 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 	return filename;
 }
 
-char *
-generate_filename_from_uri(const char *uri, const char *base_path,
-    const char *proto)
+static const char *
+fetch_filename_from_uri(const char *uri, const char *proto)
 {
-	const char *path, *module;
-	size_t pathsz, modulesz;
-	char *filename;
+	const char *module;
+	size_t modulesz;
 
-	if (!uri || !base_path)
+	if (!uri)
 		err(1, "tried to write to defunct publish uri");
 	if (rsync_uri_parse(NULL, NULL,
 			    &module, &modulesz,
-			    &path, &pathsz,
+			    NULL, NULL,
 			    NULL, uri, proto) == 0)
 		err(1, "parse uri elem fail");
 
-	if (asprintf(&filename, "%s/%.*s/%.*s", base_path,
-	    (int)modulesz, module,
-	    (int)pathsz, path) == -1)
-		err(1, "asprintf");
+	return module;
+}
 
-	return filename;
+static FILE *
+open_uri(char *uri, char *dir_name, int dir, int write) {
+	const char *filename;
+	char *full_filename;
+	char *path_delim;
+	int fd;
+	int fd_flags = O_RDONLY;
+	char * open_flags = "r";
+	FILE *f;
+
+	filename = fetch_filename_from_uri(uri, NULL);
+	/*
+	 * XXXNF this should be improved to use a mkpath_at
+	 */
+	if (write) {
+		if (asprintf(&full_filename, "%s/%s", dir_name, filename) == -1)
+			err(1, "asprintf");
+		path_delim = strrchr(full_filename, '/');
+		path_delim[0] = '\0';
+		mkpath(full_filename, USR_RWX_MODE);
+		path_delim[0] = '/';
+		fd_flags = O_WRONLY|O_CREAT|O_TRUNC;
+		open_flags = "w";
+	}
+	fd = openat(dir, filename, fd_flags, USR_RW_MODE);
+	if (fd < 0 || !(f = fdopen(fd, open_flags)))
+		err(1, "%s", __func__);
+	return f;
+}
+
+FILE *
+open_primary_uri_read(char *uri, struct opts *opts) {
+	return open_uri(uri, opts->basedir_primary, opts->primary_dir, 0);
+}
+
+FILE *
+open_working_uri_read(char *uri, struct opts *opts) {
+	return open_uri(uri, opts->basedir_working, opts->working_dir, 0);
+}
+
+FILE *
+open_working_uri_write(char *uri, struct opts *opts) {
+	return open_uri(uri, opts->basedir_working, opts->working_dir, 1);
 }
 
 char *

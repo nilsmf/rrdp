@@ -55,39 +55,15 @@ print_snapshot_xml(struct snapshot_xml *snapshot_xml)
 	printf("serial: %d\n", snapshot_xml->serial);
 }
 
-static FILE *
-open_snapshot_file(const char *publish_uri, const char *base_dir)
-{
-	if (!publish_uri)
-		err(1, "tried to write to defunct publish uri");
-	/*
-	 * TODO what are our max lengths? 4096 seems to be safe catchall
-	 * according to RFC-8181
-	 */
-	char *filename = generate_filename_from_uri(publish_uri, base_dir,
-	    NULL);
-
-	/* TODO quick and dirty getting path */
-	/* create dir if necessary */
-	char *path_delim = strrchr(filename, '/');
-	path_delim[0] = '\0';
-	mkpath(filename, 0777);
-	path_delim[0] = '/';
-	FILE * ret = fopen(filename, "w");
-	free(filename);
-	return ret;
-}
-
 static int
 write_snapshot_publish(struct xmldata *xml_data)
 {
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
-	unsigned char *data_decoded;
-	int decoded_len = 0;
 	FILE *f;
-	if (!(f = open_snapshot_file(snapshot_xml->publish_uri,
-	    xml_data->opts->basedir_working)))
-		err(1, "file open error");
+	unsigned char *data_decoded;
+	int decoded_len;
+
+	f = open_working_uri_write(snapshot_xml->publish_uri, xml_data->opts);
 	/* decode b64 message */
 	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {

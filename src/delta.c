@@ -66,16 +66,22 @@ enum validate_return {
 
 
 static enum validate_return
-validate_publish_hash(char *filename, char *hash)
+validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
+    int primary)
 {
+	FILE *f;
 	int BUFF_SIZE = 200;
 	char read_buff[BUFF_SIZE];
 	size_t buff_len;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	unsigned char bin_hash[SHA256_DIGEST_LENGTH];
+	char *hash = delta_xml->publish_hash;
 	int first_read = 1;
-	FILE *f = fopen(filename, "r");
-	printf("validating file: %s...\n", filename);
+
+	if (primary)
+		f = open_primary_uri_read(delta_xml->publish_uri, opts);
+	else
+		f = open_working_uri_read(delta_xml->publish_uri, opts);
 	if (!f)
 		return VALIDATE_RETURN_NO_FILE;
 	SHA256_CTX ctx;
@@ -105,21 +111,14 @@ static int
 verify_publish(struct xmldata *xml_data)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
-	char *filename = NULL;
 	enum validate_return v_return;
 	/* Check working dir first */
-	filename = generate_filename_from_uri(delta_xml->publish_uri,
-	    xml_data->opts->basedir_working, NULL);
-	v_return = validate_publish_hash(filename, delta_xml->publish_hash);
+
+	v_return = validate_publish_hash(delta_xml, xml_data->opts, 1);
 	/* Check the primary dir if we haven't seen the file this delta run */
 	if (v_return == VALIDATE_RETURN_NO_FILE) {
-		free(filename);
-		filename = generate_filename_from_uri(delta_xml->publish_uri,
-		    xml_data->opts->basedir_primary, NULL);
-		v_return = validate_publish_hash(filename,
-		    delta_xml->publish_hash);
+		v_return = validate_publish_hash(delta_xml, xml_data->opts, 0);
 	}
-	free(filename);
 	/* delta expects file to exist and match */
 	if (delta_xml->publish_hash) {
 		return v_return == VALIDATE_RETURN_HASH_MATCH;
@@ -129,37 +128,19 @@ verify_publish(struct xmldata *xml_data)
 	}
 }
 
-static FILE *
-open_delta_file(const char *publish_uri, const char *basedir)
-{
-	if (!publish_uri)
-		err(1, "tried to write to defunct publish uri");
-	/*
-	 * TODO what are our max lengths? 4096 seems to be safe catchall
-	 * according to RFC-8181
-	 */
-	char *filename = generate_filename_from_uri(publish_uri, basedir, NULL);
-	/* TODO quick and dirty getting path */
-	/* create dir if necessary */
-	char *path_delim = strrchr(filename, '/');
-	path_delim[0] = '\0';
-	mkpath(filename, 0777);
-	path_delim[0] = '/';
-	FILE *f = fopen(filename, "w");
-	free(filename);
-	return f;
-}
-
 static int
-write_delta_publish(struct xmldata *xml_data)
+write_delta(struct xmldata *xml_data, int withdraw)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
-	unsigned char *data_decoded;
-	int decoded_len = 0;
 	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri,
-	    xml_data->opts->basedir_working)))
-		err(1, "file open error");
+	unsigned char *data_decoded;
+	int decoded_len;
+
+	f = open_working_uri_write(delta_xml->publish_uri, xml_data->opts);
+	if (withdraw) {
+		fclose(f);
+		return 0;
+	}
 	/* decode b64 message */
 	decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
@@ -168,25 +149,6 @@ write_delta_publish(struct xmldata *xml_data)
 	}
 	fclose(f);
 	return delta_xml->publish_data_length;
-}
-
-static int
-write_delta_withdraw(struct xmldata* xml_data)
-{
-	/*
-	 * TODO files to remove could be in working or primary. best way to
-	 * solve?
-	 * I think adding the file as empty and then applying in order and then
-	 * after applying to primary removing empty files should track correctly
-	 * or keep list in memory and append or remove as we progress...
-	 */
-	struct delta_xml *delta_xml = xml_data->xml_data;
-	FILE *f;
-	if (!(f = open_delta_file(delta_xml->publish_uri,
-	    xml_data->opts->basedir_working)))
-		err(1, "file open error withdraw");
-	fclose(f);
-	return 0;
 }
 
 static void
@@ -292,9 +254,9 @@ delta_elem_end(void *data, const char *el)
 			err(1, "failed to verify delta hash");
 
 		if (strcmp("publish", el) == 0) {
-			write_delta_publish(xml_data);
+			write_delta(xml_data, 0);
 		} else
-			write_delta_withdraw(xml_data);
+			write_delta(xml_data, 1);
 		free(delta_xml->publish_uri);
 		delta_xml->publish_uri = NULL;
 		free(delta_xml->publish_hash);

@@ -20,6 +20,9 @@
 #define BASE10 10
 #define MAX_VERSION 1
 
+#define USR_RW_MODE S_IRUSR|S_IWUSR
+#define USR_RWX_MODE USR_RW_MODE|S_IXUSR
+
 struct opts {
 	char *basedir_primary;
 	char *basedir_working;
@@ -30,7 +33,9 @@ struct opts {
 int	b64_decode(char *, unsigned char **);
 
 char	*generate_basepath_from_uri(const char *, const char *, const char *);
-char	*generate_filename_from_uri(const char *, const char *, const char *);
+FILE 	*open_primary_uri_read(char *, struct opts *);
+FILE 	*open_working_uri_read(char *, struct opts *);
+FILE 	*open_working_uri_write(char *, struct opts *);
 char	*make_workdir(const char *);
 
 #endif

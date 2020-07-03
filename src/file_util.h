@@ -14,9 +14,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define ALL_RW_MODE S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH
-#define ALL_RWX_MODE ALL_RW_MODE|S_IXUSR|S_IXGRP
-
 int mkpath(char *, mode_t);
 int rm_dir(char *, int);
 int mv_delta(char *, char *);

@@ -179,7 +179,7 @@ main(int argc, char **argv)
 		usage();
 
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
-	mkpath(basedir, ALL_RWX_MODE);
+	mkpath(basedir, USR_RWX_MODE);
 	workdir = make_workdir(basedir);
 	opts.basedir_primary = basedir;
 	opts.basedir_working = workdir;

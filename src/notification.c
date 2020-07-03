@@ -325,7 +325,7 @@ save_notification_data(struct xmldata *xml_data)
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
-	    O_WRONLY|O_CREAT|O_TRUNC, ALL_RW_MODE);
+	    O_WRONLY|O_CREAT|O_TRUNC, USR_RW_MODE);
 	if (fd < 0 || !(f = fdopen(fd, "w")))
 		err(1, "%s", __func__);
 	/*
