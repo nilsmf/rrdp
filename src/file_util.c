@@ -47,6 +47,25 @@ mkpath(const char *dir, mode_t mode)
 }
 
 int
+mkpath_at(int fd, const char *dir, mode_t mode)
+{
+	struct stat sb;
+
+	if (!dir) {
+		errno = EINVAL;
+		return 1;
+	}
+	if (!stat(dir, &sb))
+		return 0;
+
+	char *newdir;
+	mkpath_at(fd, dirname(newdir = strdup(dir)), mode);
+	int ret = mkdirat(fd, newdir, mode);
+	free(newdir);
+	return ret;
+}
+
+int
 rm_dir(char *dir, int min_del_level)
 {
 	FTSENT *node;

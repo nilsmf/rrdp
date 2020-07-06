@@ -216,15 +216,12 @@ open_uri(char *uri, char *dir_name, int dir, int write) {
 	FILE *f;
 
 	filename = fetch_filename_from_uri(uri, NULL);
-	/*
-	 * XXXNF this should be improved to use a mkpath_at
-	 */
 	if (write) {
 		if (asprintf(&full_filename, "%s/%s", dir_name, filename) == -1)
 			err(1, "asprintf");
 		path_delim = strrchr(full_filename, '/');
 		path_delim[0] = '\0';
-		mkpath(full_filename, USR_RWX_MODE);
+		mkpath_at(dir, full_filename, USR_RWX_MODE);
 		path_delim[0] = '/';
 		fd_flags = O_WRONLY|O_CREAT|O_TRUNC;
 		open_flags = "w";

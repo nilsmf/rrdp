@@ -39,7 +39,6 @@
 
  * - check for error of malloc/calloc and strdup functions
  * - replace printf with more elaborate reporting (log_warn / log_debug...)
- * - use openat, renameat, linkat, unlinkat etc instead of full pathes
  * - check for memleaks (e.g. no call to XML_ParserFree())
  */
 

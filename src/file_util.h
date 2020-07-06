@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-int mkpath(char *, mode_t);
+int mkpath(const char *, mode_t);
+int mkpath_at(int, const char *, mode_t);
 int rm_dir(char *, int);
 int mv_delta(char *, char *);
