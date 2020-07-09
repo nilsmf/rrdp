@@ -208,7 +208,6 @@ fetch_filename_from_uri(const char *uri, const char *proto)
 static FILE *
 open_uri(char *uri, char *dir_name, int dir, int write) {
 	const char *filename;
-	char *full_filename;
 	char *path_delim;
 	int fd;
 	int fd_flags = O_RDONLY;
@@ -217,18 +216,20 @@ open_uri(char *uri, char *dir_name, int dir, int write) {
 
 	filename = fetch_filename_from_uri(uri, NULL);
 	if (write) {
-		if (asprintf(&full_filename, "%s/%s", dir_name, filename) == -1)
-			err(1, "asprintf");
-		path_delim = strrchr(full_filename, '/');
-		path_delim[0] = '\0';
-		mkpath_at(dir, full_filename, USR_RWX_MODE);
-		path_delim[0] = '/';
+		if ((path_delim = strrchr(filename, '/'))) {
+			/* XXX NF better way to do this directory sep? */
+			path_delim[0] = '\0';
+			if (mkpath_at(dir, filename, USR_RWX_MODE) != 0) {
+				return NULL;
+			}
+			path_delim[0] = '/';
+		}
 		fd_flags = O_WRONLY|O_CREAT|O_TRUNC;
 		open_flags = "w";
 	}
 	fd = openat(dir, filename, fd_flags, USR_RW_MODE);
 	if (fd < 0 || !(f = fdopen(fd, open_flags)))
-		err(1, "%s", __func__);
+		return NULL;
 	return f;
 }
 
@@ -247,8 +248,13 @@ open_working_uri_write(char *uri, struct opts *opts) {
 	return open_uri(uri, opts->basedir_working, opts->working_dir, 1);
 }
 
-char *
-make_workdir(const char *basedir)
+void
+free_workdir(struct opts *opts) {
+	free(opts->basedir_working);
+	close(opts->working_dir);
+}
+void
+make_workdir(const char *basedir, struct opts *opts)
 {
 	char *tmpl;
 
@@ -256,5 +262,8 @@ make_workdir(const char *basedir)
 		err(1, "%s", __func__);
 	if (mkdtemp(tmpl) == NULL)
 		err(1, "mkdtemp");
-	return tmpl;
+	opts->basedir_working = tmpl;
+	opts->working_dir = open(opts->basedir_working, O_RDONLY|O_DIRECTORY);
+	if (opts->working_dir < 0)
+		err(1, "open");
 }

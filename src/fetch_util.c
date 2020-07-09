@@ -51,35 +51,36 @@ fetch_xml_uri(struct xmldata *data)
 	if (!data || !data->uri)
 		err(1, "missing url");
 	CURL *curl = curl_easy_init();
-	if (curl) {
-		printf("starting curl: %s\n", data->uri);
-		fflush(stdout);
-		if (data->hash) {
-			SHA256_Init(&data->ctx);
-			if (strlen(data->hash) != SHA256_DIGEST_LENGTH*2)
-				err(1, "invalid hash");
-		}
-		CURLcode res;
-		curl_easy_setopt(curl, CURLOPT_URL, data->uri);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
-		curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
-		res = curl_easy_perform(curl);
-		printf("curl response: %d\n", res);
-		fflush(stdout);
-		curl_easy_cleanup(curl);
-		if (data->hash) {
-			SHA256_Final(obuff, &data->ctx);
-			for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
-				sprintf(obuff_hex + 2*n, "%02x", (unsigned int)obuff[n]);
-			if(strncasecmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
-				printf("hash '%.*s'\nvs   '%.*s'\n", SHA256_DIGEST_LENGTH*2, data->hash, SHA256_DIGEST_LENGTH*2, obuff_hex);
-				fflush(stdout);
-				err(1, "invalid hash");
-			}
-		}
-		return res;
-	} else
+	if (!curl)
 		err(1, "curl init failure");
+
+	printf("starting curl: %s\n", data->uri);
+	if (data->hash) {
+		SHA256_Init(&data->ctx);
+		if (strlen(data->hash) != SHA256_DIGEST_LENGTH*2)
+			err(1, "invalid hash");
+	}
+	CURLcode res;
+	curl_easy_setopt(curl, CURLOPT_URL, data->uri);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
+	res = curl_easy_perform(curl);
+	printf("curl response: %d\n", res);
+	curl_easy_cleanup(curl);
+	if (data->hash) {
+		SHA256_Final(obuff, &data->ctx);
+		for (n = 0; n < SHA256_DIGEST_LENGTH; n++)
+			sprintf(obuff_hex + 2*n, "%02x",
+			    (unsigned int)obuff[n]);
+		if(strncasecmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
+			printf("hash '%.*s'\nvs   '%.*s'\n",
+			    SHA256_DIGEST_LENGTH*2, data->hash,
+			    SHA256_DIGEST_LENGTH*2, obuff_hex);
+			fflush(stdout);
+			err(1, "invalid hash");
+		}
+	}
+	return res;
 }
 

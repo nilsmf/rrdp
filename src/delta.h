@@ -18,6 +18,5 @@
 #include "util.h"
 #include "notification.h"
 
-struct xmldata	*new_delta_xml_data(char *, char *, struct opts *,
-    struct notification_xml *);
+int fetch_delta_xml(char *, char *, struct opts *, struct notification_xml*);
 

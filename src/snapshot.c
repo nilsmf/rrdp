@@ -55,6 +55,43 @@ print_snapshot_xml(struct snapshot_xml *snapshot_xml)
 	printf("serial: %d\n", snapshot_xml->serial);
 }
 
+static void
+zero_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
+	snapshot_xml->scope = SNAPSHOT_SCOPE_NONE;
+	snapshot_xml->xmlns = NULL;
+	snapshot_xml->version = 0;
+	snapshot_xml->session_id = NULL;
+	snapshot_xml->serial = 0;
+}
+
+static void
+free_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
+	free(snapshot_xml->xmlns);
+	free(snapshot_xml->session_id);
+	zero_snapshot_global_data(snapshot_xml);
+}
+
+static void
+zero_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
+	snapshot_xml->publish_uri = NULL;
+	snapshot_xml->publish_data = NULL;
+	snapshot_xml->publish_data_length = 0;
+}
+
+static void
+free_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
+	free(snapshot_xml->publish_uri);
+	free(snapshot_xml->publish_data);
+	zero_snapshot_publish_data(snapshot_xml);
+}
+
+static void
+free_xml_data(struct xmldata *xml_data) {
+	XML_ParserFree(xml_data->parser);
+	free_snapshot_global_data(xml_data->xml_data);
+	free_snapshot_publish_data(xml_data->xml_data);
+}
+
 static int
 write_snapshot_publish(struct xmldata *xml_data)
 {
@@ -64,6 +101,8 @@ write_snapshot_publish(struct xmldata *xml_data)
 	int decoded_len;
 
 	f = open_working_uri_write(snapshot_xml->publish_uri, xml_data->opts);
+	if (f == NULL)
+		err(1, "%s", __func__);
 	/* decode b64 message */
 	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
@@ -162,11 +201,7 @@ snapshot_elem_end(void *data, const char *el)
 			err(1, "parse failed - no data recovered "
 			    "from publish elem");
 		write_snapshot_publish(xml_data);
-		free(snapshot_xml->publish_uri);
-		snapshot_xml->publish_uri = NULL;
-		free(snapshot_xml->publish_data);
-		snapshot_xml->publish_data = NULL;
-		snapshot_xml->publish_data_length = 0;
+		free_snapshot_publish_data(snapshot_xml);
 		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
 	} else
 		err(1, "parse failed - unexpected elem exit found");
@@ -201,23 +236,13 @@ snapshot_content_handler(void *data, const char *content, int length)
 	}
 }
 
-struct xmldata *
-new_snapshot_xml_data(char *uri, char *hash, struct opts *opts,
-    struct notification_xml *nxml)
+static void
+setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
+    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
 {
-	struct xmldata *xml_data;
-
-	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
-		err(1, NULL);
-
-	if ((xml_data->xml_data = calloc(1, sizeof(struct snapshot_xml))) ==
-	    NULL)
-		err(1, NULL);
-
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
-	((struct snapshot_xml*)xml_data->xml_data)->nxml = nxml;
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
@@ -227,6 +252,22 @@ new_snapshot_xml_data(char *uri, char *hash, struct opts *opts,
 	XML_SetCharacterDataHandler(xml_data->parser, snapshot_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 
-	return xml_data;
+	xml_data->xml_data = snapshot_xml;
+	zero_snapshot_global_data(snapshot_xml);
+	zero_snapshot_publish_data(snapshot_xml);
+	snapshot_xml->nxml = nxml;
+}
+
+int
+fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
+    struct notification_xml* nxml) {
+	struct xmldata xml_data;
+	struct snapshot_xml snapshot_xml;
+	int ret = 0;
+	setup_xml_data(&xml_data, &snapshot_xml, uri, hash, opts, nxml);
+	if (fetch_xml_uri(&xml_data) != 0)
+		ret = 1;
+	free_xml_data(&xml_data);
+	return ret;
 }
 

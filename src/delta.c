@@ -57,6 +57,46 @@ print_delta_xml(struct delta_xml *delta_xml)
 	printf("serial: %d\n", delta_xml->serial);
 }
 
+static void
+zero_delta_global_data(struct delta_xml *delta_xml) {
+	delta_xml->scope = DELTA_SCOPE_NONE;
+	delta_xml->xmlns = NULL;
+	delta_xml->version = 0;
+	delta_xml->session_id = NULL;
+	delta_xml->serial = 0;
+}
+
+static void
+free_delta_global_data(struct delta_xml *delta_xml) {
+	free(delta_xml->xmlns);
+	free(delta_xml->session_id);
+	zero_delta_global_data(delta_xml);
+}
+
+static void
+zero_delta_publish_data(struct delta_xml *delta_xml) {
+	delta_xml->publish_uri = NULL;
+	delta_xml->publish_hash = NULL;
+	delta_xml->publish_data = NULL;
+	delta_xml->publish_data_length = 0;
+}
+
+static void
+free_delta_publish_data(struct delta_xml *delta_xml) {
+	free(delta_xml->publish_uri);
+	free(delta_xml->publish_hash);
+	free(delta_xml->publish_data);
+	zero_delta_publish_data(delta_xml);
+}
+
+static void
+free_xml_data(struct xmldata *xml_data) {
+	XML_ParserFree(xml_data->parser);
+	/* XXXNF is ctx already freed? */
+	free_delta_global_data(xml_data->xml_data);
+	free_delta_publish_data(xml_data->xml_data);
+}
+
 enum validate_return {
 	VALIDATE_RETURN_NO_FILE,
 	VALIDATE_RETURN_FILE_DEL,
@@ -137,6 +177,8 @@ write_delta(struct xmldata *xml_data, int withdraw)
 	int decoded_len;
 
 	f = open_working_uri_write(delta_xml->publish_uri, xml_data->opts);
+	if (f == NULL)
+		err(1, "%s", __func__);
 	if (withdraw) {
 		fclose(f);
 		return 0;
@@ -257,13 +299,7 @@ delta_elem_end(void *data, const char *el)
 			write_delta(xml_data, 0);
 		} else
 			write_delta(xml_data, 1);
-		free(delta_xml->publish_uri);
-		delta_xml->publish_uri = NULL;
-		free(delta_xml->publish_hash);
-		delta_xml->publish_hash = NULL;
-		free(delta_xml->publish_data);
-		delta_xml->publish_data = NULL;
-		delta_xml->publish_data_length = 0;
+		free_delta_publish_data(delta_xml);
 		delta_xml->scope = DELTA_SCOPE_DELTA;
 	} else
 		err(1, "parse failed - unexpected elem exit found");
@@ -298,23 +334,12 @@ delta_content_handler(void *data, const char *content, int length)
 	}
 }
 
-struct xmldata *
-new_delta_xml_data(char *uri, char *hash, struct opts *opts,
-    struct notification_xml *nxml)
-{
-	struct xmldata *xml_data;
-
-	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
-		err(1, NULL);
-
-	if ((xml_data->xml_data = calloc(1, sizeof(struct delta_xml))) == NULL)
-		err(1, NULL);
-
+static void
+setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
+    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml) {
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
-	((struct delta_xml*)xml_data->xml_data)->nxml = nxml;
-
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
 		err(1, "XML_ParserCreate");
@@ -323,6 +348,22 @@ new_delta_xml_data(char *uri, char *hash, struct opts *opts,
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 
-	return xml_data;
+	xml_data->xml_data = delta_xml;
+	zero_delta_global_data(delta_xml);
+	zero_delta_publish_data(delta_xml);
+	delta_xml->nxml = nxml;
+}
+
+int
+fetch_delta_xml(char *uri, char *hash, struct opts *opts,
+    struct notification_xml* nxml) {
+	struct xmldata xml_data;
+	struct delta_xml delta_xml;
+	int ret = 0;
+	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml);
+	if (fetch_xml_uri(&xml_data) != 0)
+		ret = 1;
+	free_xml_data(&xml_data);
+	return ret;
 }
 

@@ -28,6 +28,7 @@ struct opts {
 	char *basedir_working;
 	int primary_dir;
 	int working_dir;
+	int single_delta;
 };
 
 int	b64_decode(char *, unsigned char **);
@@ -36,7 +37,8 @@ char	*generate_basepath_from_uri(const char *, const char *, const char *);
 FILE 	*open_primary_uri_read(char *, struct opts *);
 FILE 	*open_working_uri_read(char *, struct opts *);
 FILE 	*open_working_uri_write(char *, struct opts *);
-char	*make_workdir(const char *);
+void	make_workdir(const char *, struct opts *);
+void	free_workdir(struct opts *);
 
 #endif
 

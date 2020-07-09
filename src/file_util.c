@@ -55,7 +55,7 @@ mkpath_at(int fd, const char *dir, mode_t mode)
 		errno = EINVAL;
 		return 1;
 	}
-	if (!stat(dir, &sb))
+	if (!fstatat(fd, dir, &sb, 0))
 		return 0;
 
 	char *newdir;
@@ -91,7 +91,6 @@ rm_dir(char *dir, int min_del_level)
 			if(node->fts_level < min_del_level)
 				continue;
 
-			printf("removing path %s\n", node->fts_path);
 			if(rmdir(node->fts_path)) {
 				printf("failed to delete %s\n", node->fts_path);
 				return 1;
@@ -135,28 +134,30 @@ mv_delta(char *from, char *to)
 
 		/* create dirs in "to" as we discover them */
 		if (node->fts_info & FTS_D) {
-			printf("making path %s\n", newpath);
 			if (mkpath(newpath, 0777)) {
-				printf("failed to delete %s\n", node->fts_path);
+				printf("failed to create %s\n", node->fts_path);
 				free(newpath);
 				return 1;
 			}
+			free(newpath);
 			continue;
 		}
 		/* clear "from" directories as leave them */
 		if (node->fts_info & FTS_DP) {
-			printf("removing path %s\n", node->fts_path);
 			if (rmdir(node->fts_path)) {
 				printf("failed to delete %s\n", node->fts_path);
 				free(newpath);
 				return 1;
 			}
+			free(newpath);
 			continue;
 		}
 		/* TODO probably unlink anything we dont want to copy? */
 		if (!(node->fts_info & FTS_F) ||
-		    !(node->fts_info & (FTS_NS|FTS_NSOK)))
+		    !(node->fts_info & (FTS_NS|FTS_NSOK))) {
+			free(newpath);
 			continue;
+		}
 		/* zero sized files are delta "withdraws" */
 		if (node->fts_statp->st_size == 0) {
 			if(unlink(node->fts_path)) {
