@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 
 #include "file_util.h"
+#include "log.h"
 
 int
 mkpath(const char *dir, mode_t mode)
@@ -77,7 +78,7 @@ rm_dir(char *dir, int min_del_level)
 	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
 	if (!tree)
 		return 1;
-	printf("deleting %s\n", dir);
+	log_info("deleting %s", dir);
 
 	while ((node = fts_read(tree))) {
 		/* clear "from" directories as leave them */
@@ -92,13 +93,13 @@ rm_dir(char *dir, int min_del_level)
 				continue;
 
 			if(rmdir(node->fts_path)) {
-				printf("failed to delete %s\n", node->fts_path);
+				log_warn("failed to delete %s", node->fts_path);
 				return 1;
 			}
 			continue;
 		}
 		if (unlink(node->fts_path)) {
-			printf("failed to delete %s\n", node->fts_path);
+			log_warn("failed to delete %s", node->fts_path);
 			return 1;
 		}
 	}
@@ -121,10 +122,10 @@ mv_delta(char *from, char *to)
 
 	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
 	if (!tree) {
-		printf("failed to open tree\n");
+		log_warnx("failed to open tree");
 		return 1;
 	}
-	printf("migrating %s -> %s\n", from, to);
+	log_info("migrating %s -> %s", from, to);
 
 	while ((node = fts_read(tree))) {
 		/* replace "from" with "to" */
@@ -135,7 +136,8 @@ mv_delta(char *from, char *to)
 		/* create dirs in "to" as we discover them */
 		if (node->fts_info & FTS_D) {
 			if (mkpath(newpath, 0777)) {
-				printf("failed to create %s\n", node->fts_path);
+				log_warnx("failed to create %s",
+				    node->fts_path);
 				free(newpath);
 				return 1;
 			}
@@ -145,7 +147,8 @@ mv_delta(char *from, char *to)
 		/* clear "from" directories as leave them */
 		if (node->fts_info & FTS_DP) {
 			if (rmdir(node->fts_path)) {
-				printf("failed to delete %s\n", node->fts_path);
+				log_warnx("failed to delete %s",
+				    node->fts_path);
 				free(newpath);
 				return 1;
 			}
@@ -161,14 +164,15 @@ mv_delta(char *from, char *to)
 		/* zero sized files are delta "withdraws" */
 		if (node->fts_statp->st_size == 0) {
 			if(unlink(node->fts_path)) {
-				printf("failed to delete %s\n", node->fts_path);
+				log_warnx("failed to delete %s",
+				    node->fts_path);
 				free(newpath);
 				return 1;
 			}
 		/* otherwise move the file to the new location */
 		} else {
 			if(rename(node->fts_path, newpath)) {
-				printf("failed to move %s to %s \n",
+				log_warnx("failed to move %s to %s",
 				    node->fts_path, newpath);
 				free(newpath);
 				return 1;

@@ -24,6 +24,7 @@
 #include <expat.h>
 
 #include "snapshot.h"
+#include "log.h"
 #include "file_util.h"
 
 enum snapshot_scope {
@@ -46,13 +47,13 @@ struct snapshot_xml {
 };
 
 static void
-print_snapshot_xml(struct snapshot_xml *snapshot_xml)
+log_snapshot_xml(struct snapshot_xml *snapshot_xml)
 {
-	printf("scope: %d\n", snapshot_xml->scope);
-	printf("xmlns: %s\n", snapshot_xml->xmlns ?: "NULL");
-	printf("version: %d\n", snapshot_xml->version);
-	printf("session_id: %s\n", snapshot_xml->session_id ?: "NULL");
-	printf("serial: %d\n", snapshot_xml->serial);
+	log_info("scope: %d", snapshot_xml->scope);
+	log_info("xmlns: %s", snapshot_xml->xmlns ?: "NULL");
+	log_info("version: %d", snapshot_xml->version);
+	log_info("session_id: %s", snapshot_xml->session_id ?: "NULL");
+	log_info("serial: %d", snapshot_xml->serial);
 }
 
 static void

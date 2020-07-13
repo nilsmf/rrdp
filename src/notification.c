@@ -23,6 +23,7 @@
 #include <expat.h>
 
 #include "notification.h"
+#include "log.h"
 #include "file_util.h"
 
 static void
@@ -71,7 +72,7 @@ new_notification_xml(void)
 	struct notification_xml *nxml;
 
 	if ((nxml = calloc(1, sizeof(struct notification_xml))) == NULL)
-		err(1, NULL);
+		err(1, "calloc");
 	TAILQ_INIT(&(nxml->delta_q));
 
 	return nxml;
@@ -90,8 +91,9 @@ free_notification_xml(struct notification_xml *nxml)
 			TAILQ_REMOVE(&nxml->delta_q, d, q);
 			free_delta(d);
 		}
-	}
-	free(nxml);
+		free(nxml);
+	} else
+		err(1, "%s", __func__);
 }
 
 static void
@@ -134,7 +136,7 @@ check_state(struct notification_xml *nxml)
 
 	if (serial_diff < 0) {
 		/* current serial is larger! can't even go from snapshot */
-		printf("serial_diff is negative %d vs %d\n",
+		log_warnx("serial_diff is negative %d vs %d",
 		    nxml->serial, nxml->current_serial);
 		nxml->state = NOTIFICATION_STATE_ERROR;
 		return;
@@ -151,30 +153,31 @@ check_state(struct notification_xml *nxml)
 	}
 	/* all deltas present? */
 	if (serial_counter != serial_diff) {
-		printf("Mismatch for serial diff vs. "
-		       "actual in order serials\n");
+		log_warnx("Mismatch for serial diff vs. "
+		       "actual in order serials");
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
-	printf("Happy to apply %d deltas\n", serial_counter);
+	log_info("Happy to apply %d deltas", serial_counter);
 	/* All serials matched */
 	nxml->state = NOTIFICATION_STATE_DELTAS;
 }
 
 void
-print_notification_xml(struct notification_xml *notification_xml)
+log_notification_xml(struct notification_xml *notification_xml)
 {
-	printf("scope: %d\n", notification_xml->scope);
-	printf("state: %d\n", notification_xml->state);
-	printf("xmlns: %s\n", notification_xml->xmlns ?: "NULL");
-	printf("version: %d\n", notification_xml->version);
-	printf("current_session_id: %s\n",
+	log_info("scope: %d", notification_xml->scope);
+	log_info("state: %d", notification_xml->state);
+	log_info("xmlns: %s", notification_xml->xmlns ?: "NULL");
+	log_info("version: %d", notification_xml->version);
+	log_info("current_session_id: %s",
 	    notification_xml->current_session_id ?: "NULL");
-	printf("current_serial: %d\n", notification_xml->current_serial);
-	printf("session_id: %s\n", notification_xml->session_id ?: "NULL");
-	printf("serial: %d\n", notification_xml->serial);
-	printf("snapshot_uri: %s\n", notification_xml->snapshot_uri ?: "NULL");
-	printf("snapshot_hash: %s\n",
+	log_info("current_serial: %d", notification_xml->current_serial);
+	log_info("session_id: %s", notification_xml->session_id ?: "NULL");
+	log_info("serial: %d", notification_xml->serial);
+	log_info("snapshot_uri: %s",
+	    notification_xml->snapshot_uri ?: "NULL");
+	log_info("snapshot_hash: %s",
 	    notification_xml->snapshot_hash ?: "NULL");
 }
 
@@ -275,7 +278,7 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		    notification_xml->current_serial < delta_serial) {
 			add_delta(notification_xml,
 			    delta_uri, delta_hash, delta_serial);
-			printf("adding delta %d %s \n",
+			log_info("adding delta %d %s",
 			    delta_serial, delta_uri);
 		}
 		notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
@@ -321,7 +324,7 @@ save_notification_data(struct xmldata *xml_data)
 	FILE *f;
 	struct notification_xml *nxml = xml_data->xml_data;
 
-	printf("saving %s/%s\n", xml_data->opts->basedir_primary,
+	log_info("saving %s/%s", xml_data->opts->basedir_primary,
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
@@ -348,12 +351,12 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 	ssize_t s;
 	int l = 0;
 
-	printf("investigating %s/%s\n", xml_data->opts->basedir_primary,
+	log_info("investigating %s/%s", xml_data->opts->basedir_primary,
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME, O_RDONLY);
 	if (fd < 0 || !(f = fdopen(fd, "r"))) {
-		printf("no state file found %d\n", fd);
+		log_warnx("no state file found %d", fd);
 		return;
 	}
 
@@ -361,7 +364,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		/* must have at least 1 char serial / session */
 		if (s <= 1) {
 			fclose(f);
-			printf("bad notification file\n");
+			log_warnx("bad notification file");
 			return;
 		}
 		line[s - 1] = '\0';
@@ -375,7 +378,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		}
 		l++;
 	}
-	printf("current session %s\ncurrent serial %d\n",
+	log_info("current session %s\ncurrent serial %d",
 	    nxml->current_session_id ?: "NULL", nxml->current_serial);
 	fclose(f);
 }

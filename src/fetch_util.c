@@ -20,6 +20,7 @@
 #include <curl/curl.h>
 
 #include "fetch_util.h"
+#include "log.h"
 
 #define USER_AGENT "rrdp-client v0.1"
 
@@ -54,7 +55,7 @@ fetch_xml_uri(struct xmldata *data)
 	if (!curl)
 		err(1, "curl init failure");
 
-	printf("starting curl: %s\n", data->uri);
+	log_info("starting curl: %s", data->uri);
 	if (data->hash) {
 		SHA256_Init(&data->ctx);
 		if (strlen(data->hash) != SHA256_DIGEST_LENGTH*2)
@@ -66,7 +67,7 @@ fetch_xml_uri(struct xmldata *data)
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
 	res = curl_easy_perform(curl);
-	printf("curl response: %d\n", res);
+	log_info("curl response: %d", res);
 	curl_easy_cleanup(curl);
 	if (data->hash) {
 		SHA256_Final(obuff, &data->ctx);
@@ -74,10 +75,9 @@ fetch_xml_uri(struct xmldata *data)
 			sprintf(obuff_hex + 2*n, "%02x",
 			    (unsigned int)obuff[n]);
 		if(strncasecmp(data->hash, obuff_hex, SHA256_DIGEST_LENGTH*2)) {
-			printf("hash '%.*s'\nvs   '%.*s'\n",
+			log_warnx("hash mismatch hash '%.*s'\nvs   '%.*s'",
 			    SHA256_DIGEST_LENGTH*2, data->hash,
 			    SHA256_DIGEST_LENGTH*2, obuff_hex);
-			fflush(stdout);
 			err(1, "invalid hash");
 		}
 	}

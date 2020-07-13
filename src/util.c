@@ -30,6 +30,7 @@
 #include <fcntl.h>
 
 #include "util.h"
+#include "log.h"
 #include "file_util.h"
 
 int b64_decode(char *src, unsigned char **b64) {
@@ -45,8 +46,7 @@ int b64_decode(char *src, unsigned char **b64) {
 	if ((b64sz = b64_pton(src, *b64, sz)) < 0) {
 		free(*b64);
 		*b64 = NULL;
-		printf("failed to b64 decode\n");
-		printf("%s\n", src);
+		log_warnx("failed to b64 decode: %s", src);
 		return -1;
 	}
 	return b64sz;
@@ -94,7 +94,7 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	/* Case-insensitive rsync URI. */
 
 	if (strncasecmp(uri, proto, strlen(proto))) {
-		warnx("%s: not using %s schema", uri, proto);
+		log_warnx("%s: not using %s schema", uri, proto);
 		return 0;
 	}
 
@@ -103,10 +103,10 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	host = uri + strlen(proto);
 
 	if ((module = strchr(host, '/')) == NULL) {
-		warnx("%s: missing rsync module", uri);
+		log_warnx("%s: missing rsync module", uri);
 		return 0;
 	} else if (module == host) {
-		warnx("%s: zero-length rsync host", uri);
+		log_warnx("%s: zero-length rsync host", uri);
 		return 0;
 	}
 
@@ -118,7 +118,7 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	/* The non-zero-length module follows the hostname. */
 
 	if (module[1] == '\0') {
-		warnx("%s: zero-length rsync module", uri);
+		log_warnx("%s: zero-length rsync module", uri);
 		return 0;
 	}
 
@@ -134,7 +134,7 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 			*modulesz = strlen(module);
 		return 1;
 	} else if (path == module) {
-		warnx("%s: zero-length module", uri);
+		log_warnx("%s: zero-length module", uri);
 		return 0;
 	}
 
@@ -174,7 +174,7 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 	char *filename;
 
 	if (!uri || !base_path) {
-		warnx("%s - missing data", __func__);
+		log_warnx("%s - missing data", __func__);
 		return NULL;
 	}
 	if (rsync_uri_parse(&host, &hostsz,

@@ -25,6 +25,7 @@
 #include <openssl/sha.h>
 
 #include "delta.h"
+#include "log.h"
 #include "file_util.h"
 
 enum delta_scope {
@@ -48,13 +49,13 @@ struct delta_xml {
 };
 
 static void
-print_delta_xml(struct delta_xml *delta_xml)
+log_delta_xml(struct delta_xml *delta_xml)
 {
-	printf("scope: %d\n", delta_xml->scope);
-	printf("xmlns: %s\n", delta_xml->xmlns ?: "NULL");
-	printf("version: %d\n", delta_xml->version);
-	printf("session_id: %s\n", delta_xml->session_id ?: "NULL");
-	printf("serial: %d\n", delta_xml->serial);
+	log_info("scope: %d", delta_xml->scope);
+	log_info("xmlns: %s", delta_xml->xmlns ?: "NULL");
+	log_info("version: %d", delta_xml->version);
+	log_info("session_id: %s", delta_xml->session_id ?: "NULL");
+	log_info("serial: %d", delta_xml->serial);
 }
 
 static void

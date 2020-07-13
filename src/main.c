@@ -17,9 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <syslog.h>
 #include <err.h>
 #include <fcntl.h>
 
+#include "log.h"
 #include "notification.h"
 #include "snapshot.h"
 #include "delta.h"
@@ -44,9 +46,14 @@
 
 static int
 rm_working_dir(struct opts *opts) {
+	int ret;
 	if (close(opts->working_dir))
-		err(1, __func__);
-	return rm_dir(opts->basedir_working, 0);
+		err(1, "%s", __func__);
+	if ((ret = rm_dir(opts->basedir_working, 0)) != 0) {
+		log_warnx("%s - failed to remove working dir", __func__);
+		ret = 1;
+	}
+	return ret;
 }
 
 static int
@@ -62,12 +69,12 @@ fetch_notification_xml(char* uri, struct opts *opts)
 {
 	struct xmldata *xml_data = new_notification_xml_data(uri, opts);
 	if (fetch_xml_uri(xml_data) != 0)
-		err(1, "failed to curl");
+		errx(1, "%s", __func__);
 	struct notification_xml *nxml = xml_data->xml_data;
 
 	if (!nxml)
-		err(1, "no notification_xml available");
-	print_notification_xml(nxml);
+		errx(1, "no notification_xml available");
+	log_notification_xml(nxml);
 	return xml_data;
 }
 
@@ -83,13 +90,13 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts) {
 		err(1, "NOTIFICATION_STATE_ERROR");
 	case NOTIFICATION_STATE_NONE:
 		rm_working_dir(opts);
-		printf("up to date\n");
+		log_info("up to date");
 		return;
 	case NOTIFICATION_STATE_DELTAS:
 		expected_deltas = nxml->serial - nxml->current_serial;
 		if (opts->single_delta)
 			expected_deltas = 1;
-		printf("fetching deltas\n");
+		log_info("fetching deltas");
 		while (!TAILQ_EMPTY(&(nxml->delta_q))) {
 			d = TAILQ_FIRST(&(nxml->delta_q));
 			TAILQ_REMOVE(&(nxml->delta_q), d, q);
@@ -99,7 +106,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts) {
 				    opts, nxml) == 0)
 					num_deltas++;
 				else {
-					printf("failed to fetch delta %s\n",
+					log_warnx("failed to fetch delta %s",
 					    d->uri);
 					break;
 				}
@@ -118,21 +125,21 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts) {
 			if (mv_delta(opts->basedir_working,
 			    opts->basedir_primary) == 0) {
 				rm_working_dir(opts);
-				printf("delta migrate passed\n");
+				log_info("delta migrate passed");
 				break;
 			} else
-				printf("delta migration failed\n");
+				log_warnx("delta migration failed");
 		} else
-			printf("not all deltas processed: %d/%d\n", num_deltas,
+			log_warnx("not all deltas processed: %d/%d", num_deltas,
 			    expected_deltas);
 		/* Clean up the snapshot delta dir and make a new one */
 		rm_working_dir(opts);
 		free_workdir(opts);
 		make_workdir(opts->basedir_primary, opts);
-		printf("deltas failed going to snapshot\n");
+		log_warnx("deltas failed going to snapshot");
 		/* FALLTHROUGH */
 	case NOTIFICATION_STATE_SNAPSHOT:
-		printf("fetching snapshot\n");
+		log_info("fetching snapshot");
 		/* XXXCJ check that uri points to same host */
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
 		    nxml->snapshot_hash, opts, nxml) != 0) {
@@ -150,7 +157,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts) {
 			rm_working_dir(opts);
 			err(1, "failed to update");
 		}
-		printf("snapshot move success\n");
+		log_info("snapshot move success");
 	}
 	save_notification_data(xml_data);
 }
@@ -183,6 +190,7 @@ main(int argc, char **argv)
 		}
 	}
 
+	log_init(1, LOG_USER);
 	argv += optind;
 	argc -= optind;
 
