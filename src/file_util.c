@@ -27,6 +27,7 @@
 
 #include "file_util.h"
 #include "log.h"
+#include "util.h"
 
 int
 mkpath(const char *dir, mode_t mode)
@@ -41,7 +42,7 @@ mkpath(const char *dir, mode_t mode)
 		return 0;
 
 	char *newdir;
-	mkpath(dirname(newdir = strdup(dir)), mode);
+	mkpath(dirname(newdir = xstrdup(dir)), mode);
 	int ret = mkdir(newdir, mode);
 	free(newdir);
 	return ret;
@@ -60,7 +61,7 @@ mkpath_at(int fd, const char *dir, mode_t mode)
 		return 0;
 
 	char *newdir;
-	mkpath_at(fd, dirname(newdir = strdup(dir)), mode);
+	mkpath_at(fd, dirname(newdir = xstrdup(dir)), mode);
 	int ret = mkdirat(fd, newdir, mode);
 	free(newdir);
 	return ret;

@@ -132,12 +132,12 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 			    "unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0)
-				snapshot_xml->xmlns = strdup(attr[i+1]);
+				snapshot_xml->xmlns = xstrdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
 				snapshot_xml->version =
 				    (int)strtol(attr[i+1], NULL, BASE10);
 			else if (strcmp("session_id", attr[i]) == 0)
-				snapshot_xml->session_id = strdup(attr[i+1]);
+				snapshot_xml->session_id = xstrdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
 				snapshot_xml->serial =
 				    (int)strtol(attr[i+1], NULL, BASE10);
@@ -171,7 +171,7 @@ snapshot_elem_start(void *data, const char *el, const char **attr)
 			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
-				snapshot_xml->publish_uri = strdup(attr[i+1]);
+				snapshot_xml->publish_uri = xstrdup(attr[i+1]);
 			else if (strcmp("xmlns", attr[i]) == 0);
 				/* XXX should we do nothing? */
 			else
@@ -229,7 +229,7 @@ snapshot_content_handler(void *data, const char *content, int length)
 		snapshot_xml->publish_data = realloc(snapshot_xml->publish_data,
 		    new_length + 1);
 		if (snapshot_xml->publish_data == NULL)
-			err(1, "%s", __func__);
+			fatal("%s - realloc", __func__);
 
 		memcpy(snapshot_xml->publish_data +
 		    snapshot_xml->publish_data_length, content, length);

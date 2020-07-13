@@ -32,15 +32,12 @@ add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
 {
 	struct delta_item *d, *n;
 
-	d = calloc(1, sizeof(struct delta_item));
-	if (!d)
-		err(1, NULL);
+	if ((d = calloc(1, sizeof(struct delta_item))) == NULL)
+		fatal("%s - calloc", __func__);
 
 	d->serial = serial;
-	d->uri = strdup(uri);
-	d->hash = strdup(hash);
-	if (d->uri == NULL || d->hash == NULL)
-		err(1, NULL);
+	d->uri = xstrdup(uri);
+	d->hash = xstrdup(hash);
 
 	n = TAILQ_LAST(&nxml->delta_q, delta_q);
 	if (!n || serial < n->serial) {
@@ -73,7 +70,7 @@ new_notification_xml(void)
 	struct notification_xml *nxml;
 
 	if ((nxml = calloc(1, sizeof(struct notification_xml))) == NULL)
-		err(1, "calloc");
+		fatal("%s - calloc", __func__);
 	TAILQ_INIT(&(nxml->delta_q));
 
 	return nxml;
@@ -199,13 +196,13 @@ notification_elem_start(void *data, const char *el, const char **attr)
 			    "elem unexpectedely");
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("xmlns", attr[i]) == 0)
-				notification_xml->xmlns = strdup(attr[i+1]);
+				notification_xml->xmlns = xstrdup(attr[i+1]);
 			else if (strcmp("version", attr[i]) == 0)
 				notification_xml->version =
 				    (int)strtol(attr[i+1], NULL, BASE10);
 			else if (strcmp("session_id", attr[i]) == 0)
 				notification_xml->session_id =
-				    strdup(attr[i+1]);
+				    xstrdup(attr[i+1]);
 			else if (strcmp("serial", attr[i]) == 0)
 				notification_xml->serial =
 				    (int)strtol(attr[i+1], NULL, BASE10);
@@ -238,10 +235,10 @@ notification_elem_start(void *data, const char *el, const char **attr)
 		for (i = 0; attr[i]; i += 2) {
 			if (strcmp("uri", attr[i]) == 0)
 				notification_xml->snapshot_uri =
-				    strdup(attr[i+1]);
+				    xstrdup(attr[i+1]);
 			else if (strcmp("hash", attr[i]) == 0)
 				notification_xml->snapshot_hash =
-				    strdup(attr[i+1]);
+				    xstrdup(attr[i+1]);
 			else
 				err(1, "parse failed - non conforming "
 				    "attribute found in snapshot elem");
@@ -370,7 +367,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		}
 		line[s - 1] = '\0';
 		if (l == 0)
-			nxml->current_session_id = strdup(line);
+			nxml->current_session_id = xstrdup(line);
 		else if (l == 1) {
 			/*
 			 * XXXCJ use strtonum here and maybe 64bit int
@@ -390,7 +387,7 @@ new_notification_xml_data(char *uri, struct opts *opts)
 	struct xmldata *xml_data;
 
 	if ((xml_data = calloc(1, sizeof(struct xmldata))) == NULL)
-		err(1, NULL);
+		fatal("%s - calloc", __func__);
 	xml_data->xml_data = new_notification_xml();
 
 	xml_data->uri = uri;

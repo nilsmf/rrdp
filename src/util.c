@@ -33,6 +33,15 @@
 #include "log.h"
 #include "file_util.h"
 
+char *
+xstrdup(const char *s)
+{
+	char *r;
+	if ((r = strdup(s)) == NULL)
+		fatal("strdup");
+	return r;
+}
+
 int b64_decode(char *src, unsigned char **b64)
 {
 	size_t sz;
@@ -43,7 +52,7 @@ int b64_decode(char *src, unsigned char **b64)
 
 	sz = ((strlen(src) + 3) / 4) * 3 + 1;
 	if ((*b64 = malloc(sz)) == NULL)
-		err(1, NULL);
+		fatal("%s - malloc", __func__);
 	if ((b64sz = b64_pton(src, *b64, sz)) < 0) {
 		free(*b64);
 		*b64 = NULL;

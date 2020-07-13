@@ -39,8 +39,6 @@
  * - curl -> ftp
  * - dont allow basedirs outside our dirs (check for ..)
 
- * - check for error of malloc/calloc and strdup functions
- * - replace printf with more elaborate reporting (log_warn / log_debug...)
  * - check for memleaks (e.g. no call to XML_ParserFree())
  */
 

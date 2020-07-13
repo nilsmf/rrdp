@@ -32,6 +32,7 @@ struct opts {
 };
 
 int	b64_decode(char *, unsigned char **);
+char 	*xstrdup(const char *);
 
 char	*generate_basepath_from_uri(const char *, const char *, const char *);
 FILE 	*open_primary_uri_read(char *, struct opts *);
