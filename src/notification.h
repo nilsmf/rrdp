@@ -72,6 +72,7 @@ void			free_notification_xml(struct notification_xml *);
 void			print_notification_xml(struct notification_xml *);
 
 struct xmldata	*new_notification_xml_data(char *, struct opts *);
+void		free_xml_data(struct xmldata *);
 void		save_notification_data(struct xmldata *);
 
 #endif

@@ -67,13 +67,6 @@ zero_delta_global_data(struct delta_xml *delta_xml) {
 }
 
 static void
-free_delta_global_data(struct delta_xml *delta_xml) {
-	free(delta_xml->xmlns);
-	free(delta_xml->session_id);
-	zero_delta_global_data(delta_xml);
-}
-
-static void
 zero_delta_publish_data(struct delta_xml *delta_xml) {
 	delta_xml->publish_uri = NULL;
 	delta_xml->publish_hash = NULL;
@@ -90,10 +83,13 @@ free_delta_publish_data(struct delta_xml *delta_xml) {
 }
 
 static void
-free_xml_data(struct xmldata *xml_data) {
+free_delta_xml_data(struct xmldata *xml_data) {
+	struct delta_xml *delta_xml;
 	XML_ParserFree(xml_data->parser);
-	/* XXXNF is ctx already freed? */
-	free_delta_global_data(xml_data->xml_data);
+	delta_xml = xml_data->xml_data;
+	free(delta_xml->xmlns);
+	free(delta_xml->session_id);
+	zero_delta_global_data(delta_xml);
 	free_delta_publish_data(xml_data->xml_data);
 }
 
@@ -363,7 +359,7 @@ fetch_delta_xml(char *uri, char *hash, struct opts *opts,
 	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml);
 	if (fetch_xml_uri(&xml_data) != 0)
 		ret = 1;
-	free_xml_data(&xml_data);
+	free_delta_xml_data(&xml_data);
 	return ret;
 }
 

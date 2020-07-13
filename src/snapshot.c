@@ -65,13 +65,6 @@ zero_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
 }
 
 static void
-free_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
-	free(snapshot_xml->xmlns);
-	free(snapshot_xml->session_id);
-	zero_snapshot_global_data(snapshot_xml);
-}
-
-static void
 zero_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
 	snapshot_xml->publish_uri = NULL;
 	snapshot_xml->publish_data = NULL;
@@ -86,9 +79,13 @@ free_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
 }
 
 static void
-free_xml_data(struct xmldata *xml_data) {
+free_snapshot_xml_data(struct xmldata *xml_data) {
+	struct snapshot_xml *snapshot_xml;
 	XML_ParserFree(xml_data->parser);
-	free_snapshot_global_data(xml_data->xml_data);
+	snapshot_xml = (struct snapshot_xml*)xml_data->xml_data;
+	free(snapshot_xml->xmlns);
+	free(snapshot_xml->session_id);
+	zero_snapshot_global_data(snapshot_xml);
 	free_snapshot_publish_data(xml_data->xml_data);
 }
 
@@ -267,7 +264,7 @@ fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
 	setup_xml_data(&xml_data, &snapshot_xml, uri, hash, opts, nxml);
 	if (fetch_xml_uri(&xml_data) != 0)
 		ret = 1;
-	free_xml_data(&xml_data);
+	free_snapshot_xml_data(&xml_data);
 	return ret;
 }
 

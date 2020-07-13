@@ -407,3 +407,10 @@ new_notification_xml_data(char *uri, struct opts *opts)
 	return xml_data;
 }
 
+void
+free_xml_data(struct xmldata *xml_data)
+{
+	XML_ParserFree(xml_data->parser);
+	free_notification_xml(xml_data->xml_data);
+	free(xml_data);
+}

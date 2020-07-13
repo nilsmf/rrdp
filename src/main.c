@@ -195,13 +195,17 @@ main(int argc, char **argv)
 		usage();
 
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
-	mkpath(basedir, USR_RWX_MODE);
-	make_workdir(basedir, &opts);
+	if (mkpath(basedir, USR_RWX_MODE) != 0)
+		err(1, "failed to make basedir");
 	opts.basedir_primary = basedir;
 	opts.primary_dir = open(opts.basedir_primary, O_RDONLY|O_DIRECTORY);
 	if (opts.primary_dir < 0)
 		err(1, "failed to open dir: %s", basedir);
+	make_workdir(basedir, &opts);
 	xml_data = fetch_notification_xml(uri, &opts);
 	process_notification_xml(xml_data, &opts);
+	free_xml_data(xml_data);
+	close(opts.primary_dir);
 	free_workdir(&opts);
+	free(basedir);
 }

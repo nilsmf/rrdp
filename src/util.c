@@ -173,16 +173,18 @@ generate_basepath_from_uri(const char *uri, const char *base_path,
 	size_t hostsz;
 	char *filename;
 
-	if (!uri || !base_path)
-		err(1, "tried to write to defunct publish uri");
+	if (!uri || !base_path) {
+		warnx("%s - missing data", __func__);
+		return NULL;
+	}
 	if (rsync_uri_parse(&host, &hostsz,
 			    NULL, NULL,
 			    NULL, NULL,
-			    NULL, uri, proto) == 0)
-		err(1, "parse uri elem fail");
+			    NULL, uri, proto) == 0) {
+		return NULL;
+	}
 
-	if (asprintf(&filename, "%s/%.*s", base_path,
-	    (int)hostsz, host) == -1)
+	if (asprintf(&filename, "%s/%.*s", base_path, (int)hostsz, host) == -1)
 		err(1, "asprintf");
 
 	return filename;
@@ -259,7 +261,7 @@ make_workdir(const char *basedir, struct opts *opts)
 	char *tmpl;
 
 	if (asprintf(&tmpl, "%s.XXXXXXXX", basedir) == -1)
-		err(1, "%s", __func__);
+		err(1, "asprintf");
 	if (mkdtemp(tmpl) == NULL)
 		err(1, "mkdtemp");
 	opts->basedir_working = tmpl;
