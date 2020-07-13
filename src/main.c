@@ -45,7 +45,8 @@
  */
 
 static int
-rm_working_dir(struct opts *opts) {
+rm_working_dir(struct opts *opts)
+{
 	int ret;
 	if (close(opts->working_dir))
 		err(1, "%s", __func__);
@@ -57,7 +58,8 @@ rm_working_dir(struct opts *opts) {
 }
 
 static int
-rm_primary_dir(struct opts *opts) {
+rm_primary_dir(struct opts *opts)
+{
 	/*
 	 * Don't delete the primary dir itself. It has an open fd we will use.
 	 */
@@ -79,7 +81,8 @@ fetch_notification_xml(char* uri, struct opts *opts)
 }
 
 static void
-process_notification_xml(struct xmldata *xml_data, struct opts *opts) {
+process_notification_xml(struct xmldata *xml_data, struct opts *opts)
+{
 	struct notification_xml *nxml = xml_data->xml_data;
 	int num_deltas = 0;
 	int expected_deltas = 0;

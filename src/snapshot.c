@@ -57,7 +57,8 @@ log_snapshot_xml(struct snapshot_xml *snapshot_xml)
 }
 
 static void
-zero_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
+zero_snapshot_global_data(struct snapshot_xml *snapshot_xml)
+{
 	snapshot_xml->scope = SNAPSHOT_SCOPE_NONE;
 	snapshot_xml->xmlns = NULL;
 	snapshot_xml->version = 0;
@@ -66,21 +67,24 @@ zero_snapshot_global_data(struct snapshot_xml *snapshot_xml) {
 }
 
 static void
-zero_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
+zero_snapshot_publish_data(struct snapshot_xml *snapshot_xml)
+{
 	snapshot_xml->publish_uri = NULL;
 	snapshot_xml->publish_data = NULL;
 	snapshot_xml->publish_data_length = 0;
 }
 
 static void
-free_snapshot_publish_data(struct snapshot_xml *snapshot_xml) {
+free_snapshot_publish_data(struct snapshot_xml *snapshot_xml)
+{
 	free(snapshot_xml->publish_uri);
 	free(snapshot_xml->publish_data);
 	zero_snapshot_publish_data(snapshot_xml);
 }
 
 static void
-free_snapshot_xml_data(struct xmldata *xml_data) {
+free_snapshot_xml_data(struct xmldata *xml_data)
+{
 	struct snapshot_xml *snapshot_xml;
 	XML_ParserFree(xml_data->parser);
 	snapshot_xml = (struct snapshot_xml*)xml_data->xml_data;
@@ -258,7 +262,8 @@ setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
 
 int
 fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
-    struct notification_xml* nxml) {
+    struct notification_xml* nxml)
+{
 	struct xmldata xml_data;
 	struct snapshot_xml snapshot_xml;
 	int ret = 0;

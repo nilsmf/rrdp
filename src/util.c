@@ -33,7 +33,8 @@
 #include "log.h"
 #include "file_util.h"
 
-int b64_decode(char *src, unsigned char **b64) {
+int b64_decode(char *src, unsigned char **b64)
+{
 	size_t sz;
 	int b64sz;
 
@@ -208,7 +209,8 @@ fetch_filename_from_uri(const char *uri, const char *proto)
 }
 
 static FILE *
-open_uri(char *uri, char *dir_name, int dir, int write) {
+open_uri(char *uri, char *dir_name, int dir, int write)
+{
 	const char *filename;
 	char *path_delim;
 	int fd;
@@ -236,22 +238,26 @@ open_uri(char *uri, char *dir_name, int dir, int write) {
 }
 
 FILE *
-open_primary_uri_read(char *uri, struct opts *opts) {
+open_primary_uri_read(char *uri, struct opts *opts)
+{
 	return open_uri(uri, opts->basedir_primary, opts->primary_dir, 0);
 }
 
 FILE *
-open_working_uri_read(char *uri, struct opts *opts) {
+open_working_uri_read(char *uri, struct opts *opts)
+{
 	return open_uri(uri, opts->basedir_working, opts->working_dir, 0);
 }
 
 FILE *
-open_working_uri_write(char *uri, struct opts *opts) {
+open_working_uri_write(char *uri, struct opts *opts)
+{
 	return open_uri(uri, opts->basedir_working, opts->working_dir, 1);
 }
 
 void
-free_workdir(struct opts *opts) {
+free_workdir(struct opts *opts)
+{
 	free(opts->basedir_working);
 	close(opts->working_dir);
 }

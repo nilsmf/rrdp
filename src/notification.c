@@ -60,7 +60,8 @@ add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
 }
 
 void
-free_delta(struct delta_item *d) {
+free_delta(struct delta_item *d)
+{
 	free(d->uri);
 	free(d->hash);
 	free(d);

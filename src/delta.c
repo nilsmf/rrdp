@@ -59,7 +59,8 @@ log_delta_xml(struct delta_xml *delta_xml)
 }
 
 static void
-zero_delta_global_data(struct delta_xml *delta_xml) {
+zero_delta_global_data(struct delta_xml *delta_xml)
+{
 	delta_xml->scope = DELTA_SCOPE_NONE;
 	delta_xml->xmlns = NULL;
 	delta_xml->version = 0;
@@ -68,7 +69,8 @@ zero_delta_global_data(struct delta_xml *delta_xml) {
 }
 
 static void
-zero_delta_publish_data(struct delta_xml *delta_xml) {
+zero_delta_publish_data(struct delta_xml *delta_xml)
+{
 	delta_xml->publish_uri = NULL;
 	delta_xml->publish_hash = NULL;
 	delta_xml->publish_data = NULL;
@@ -76,7 +78,8 @@ zero_delta_publish_data(struct delta_xml *delta_xml) {
 }
 
 static void
-free_delta_publish_data(struct delta_xml *delta_xml) {
+free_delta_publish_data(struct delta_xml *delta_xml)
+{
 	free(delta_xml->publish_uri);
 	free(delta_xml->publish_hash);
 	free(delta_xml->publish_data);
@@ -84,7 +87,8 @@ free_delta_publish_data(struct delta_xml *delta_xml) {
 }
 
 static void
-free_delta_xml_data(struct xmldata *xml_data) {
+free_delta_xml_data(struct xmldata *xml_data)
+{
 	struct delta_xml *delta_xml;
 	XML_ParserFree(xml_data->parser);
 	delta_xml = xml_data->xml_data;
@@ -333,7 +337,8 @@ delta_content_handler(void *data, const char *content, int length)
 
 static void
 setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
-    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml) {
+    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
+{
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
@@ -353,7 +358,8 @@ setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
 
 int
 fetch_delta_xml(char *uri, char *hash, struct opts *opts,
-    struct notification_xml* nxml) {
+    struct notification_xml* nxml)
+{
 	struct xmldata xml_data;
 	struct delta_xml delta_xml;
 	int ret = 0;
