@@ -23,16 +23,20 @@
 
 #include "util.h"
 
+#define TIME_FORMAT "%a, %d %b %Y %T GMT"
+#define TIME_LEN 30
+
 struct xmldata {
 	struct opts *opts;
 	char *uri;
 	char *hash;
+	char modified_since[TIME_LEN];
 	SHA256_CTX ctx;
 	XML_Parser parser;
 	void *xml_data;
 };
 
-int fetch_xml_uri(struct xmldata *);
+long fetch_xml_uri(struct xmldata *);
 
 #endif
 

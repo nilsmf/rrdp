@@ -70,6 +70,7 @@ struct notification_xml {
 struct notification_xml	*new_notification_xml(void);
 void			free_notification_xml(struct notification_xml *);
 void			log_notification_xml(struct notification_xml *);
+void			check_state(struct notification_xml *);
 
 struct xmldata	*new_notification_xml_data(char *, struct opts *);
 void		free_xml_data(struct xmldata *);

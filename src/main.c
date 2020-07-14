@@ -28,18 +28,15 @@
 #include "file_util.h"
 
 /*
- * - use If-Modified-Since header for notification requests
- * - handle network failures with retries
- * - start to handle errors better
- * - nice to have optimise with keep alives etc.
- * - deal with withdraws (either ignore or leave as is)
- * - should we ensure versions match between calls?
- * - exit early from xml parsing if we know we are ok already?
- *   I think no since we need to make sure it is valid still...
- * - curl -> ftp
- * - dont allow basedirs outside our dirs (check for ..)
 
  * - check for memleaks (e.g. no call to XML_ParserFree())
+ * - review use of err and bubble up most issues so deltas don't crash except on
+ *   fatal mem/file issues
+ * - add pledge calls
+ * - use If-Modified-Since header for notification requests
+ * - handle network failures with retries
+ * - deal with withdraws (either ignore or leave as is)
+ * - dont allow basedirs outside our dirs (check for ..)
  */
 
 static int
@@ -59,7 +56,8 @@ static int
 rm_primary_dir(struct opts *opts)
 {
 	/*
-	 * Don't delete the primary dir itself. It has an open fd we will use.
+	 * Don't delete the primary dir itself (use flag).
+	 * It has an open fd we will use.
 	 */
 	return rm_dir(opts->basedir_primary, 1);
 }
@@ -68,12 +66,22 @@ static struct xmldata*
 fetch_notification_xml(char* uri, struct opts *opts)
 {
 	struct xmldata *xml_data = new_notification_xml_data(uri, opts);
-	if (fetch_xml_uri(xml_data) != 0)
+	long res;
+	res = fetch_xml_uri(xml_data);
+	if (res != 200 && res != 304)
 		errx(1, "%s", __func__);
+
 	struct notification_xml *nxml = xml_data->xml_data;
 
 	if (!nxml)
 		errx(1, "no notification_xml available");
+	if (res == 304) {
+		log_info("Got up to date return code from server");
+		nxml->state = NOTIFICATION_STATE_NONE;
+	} else {
+		/* one last check in case empty values returned */
+		check_state(nxml);
+	}
 	log_notification_xml(nxml);
 	return xml_data;
 }
@@ -88,7 +96,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 
 	switch (nxml->state) {
 	case NOTIFICATION_STATE_ERROR:
-		err(1, "NOTIFICATION_STATE_ERROR");
+		errx(1, "NOTIFICATION_STATE_ERROR");
 	case NOTIFICATION_STATE_NONE:
 		rm_working_dir(opts);
 		log_info("up to date");

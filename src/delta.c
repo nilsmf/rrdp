@@ -342,6 +342,9 @@ setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
 	xml_data->uri = uri;
 	xml_data->opts = opts;
 	xml_data->hash = hash;
+	/* delta doesn't use modified since */
+	xml_data->modified_since[0] = '\0';
+
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
 		err(1, "XML_ParserCreate");
@@ -364,7 +367,7 @@ fetch_delta_xml(char *uri, char *hash, struct opts *opts,
 	struct delta_xml delta_xml;
 	int ret = 0;
 	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml);
-	if (fetch_xml_uri(&xml_data) != 0)
+	if (fetch_xml_uri(&xml_data) != 200)
 		ret = 1;
 	free_delta_xml_data(&xml_data);
 	return ret;

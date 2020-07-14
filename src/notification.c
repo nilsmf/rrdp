@@ -94,7 +94,7 @@ free_notification_xml(struct notification_xml *nxml)
 		err(1, "%s", __func__);
 }
 
-static void
+void
 check_state(struct notification_xml *nxml)
 {
 	struct delta_item *d;
@@ -333,7 +333,8 @@ save_notification_data(struct xmldata *xml_data)
 	 * TODO maybe this should actually come from the snapshot/deltas that
 	 * get written might not matter if we have verified consistency already
 	 */
-	fprintf(f, "%s\n%d\n", nxml->session_id, nxml->serial);
+	fprintf(f, "%s\n%d\n%s\n", nxml->session_id, nxml->serial,
+	    xml_data->modified_since);
 	fclose(f);
 }
 
@@ -358,7 +359,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		return;
 	}
 
-	while (l < 2 && (s = getline(&line, &len, f)) != -1) {
+	while (l < 3 && (s = getline(&line, &len, f)) != -1) {
 		/* must have at least 1 char serial / session */
 		if (s <= 1) {
 			fclose(f);
@@ -373,11 +374,20 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 			 * XXXCJ use strtonum here and maybe 64bit int
 			 */
 			nxml->current_serial = (int)strtol(line, NULL, BASE10);
+		} else if (l == 2) {
+			if (strlen(line) == TIME_LEN - 1) {
+				strncpy(xml_data->modified_since, line,
+				    TIME_LEN);
+			} else {
+				log_warnx("bad time in notification file: '%s'",
+				    line);
+			}
 		}
 		l++;
 	}
-	log_info("current session %s\ncurrent serial %d",
-	    nxml->current_session_id ?: "NULL", nxml->current_serial);
+	log_info("current session: %s\ncurrent serial: %d\nmodified since: %s",
+	    nxml->current_session_id ?: "NULL", nxml->current_serial,
+	    xml_data->modified_since);
 	fclose(f);
 }
 
@@ -394,7 +404,8 @@ new_notification_xml_data(char *uri, struct opts *opts)
 	xml_data->opts = opts;
 	/* no hash verification for notification file */
 	xml_data->hash = NULL;
-
+	/* set modified since to empty string for safety */
+	xml_data->modified_since[0] = '\0';
 	fetch_existing_notification_data(xml_data);
 
 	xml_data->parser = XML_ParserCreate(NULL);
