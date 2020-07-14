@@ -133,7 +133,6 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		if (num_deltas == expected_deltas) {
 			if (mv_delta(opts->basedir_working,
 			    opts->basedir_primary) == 0) {
-				rm_working_dir(opts);
 				log_info("delta migrate passed");
 				break;
 			} else
@@ -144,8 +143,8 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		/* Clean up the snapshot delta dir and make a new one */
 		rm_working_dir(opts);
 		free_workdir(opts);
-		make_workdir(opts->basedir_primary, opts);
 		log_warnx("deltas failed going to snapshot");
+		make_workdir(opts->basedir_primary, opts);
 		/* FALLTHROUGH */
 	case NOTIFICATION_STATE_SNAPSHOT:
 		log_info("fetching snapshot");
