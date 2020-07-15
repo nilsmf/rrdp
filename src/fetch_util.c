@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <err.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 #include <curl/curl.h>
 
@@ -25,8 +26,50 @@
 
 #define USER_AGENT "rrdp-client v0.1"
 #define IF_MODIFIED_SINCE "If-Modified-Since"
-#define DATE "Date"
+#define DATE "Date:"
+#define DATE_LEN 5
+#define LAST_MODIFIED "Last-Modified:"
+#define LAST_MODIFIED_LEN 14
 
+struct header_data {
+	char date[TIME_LEN];
+	char last_modified[TIME_LEN];
+};
+
+static void
+get_value_from_header(char *buff, size_t buff_len, char *value, size_t val_len)
+{
+	int i;
+	char *val = NULL;
+	for(i = 0; i < buff_len; i++) {
+		if (!isspace(buff[i])) {
+			val = buff + i;
+			break;
+		}
+	}
+	int to_copy = buff_len - i;
+	if (to_copy > val_len) {
+		to_copy = val_len;
+	}
+	strncpy(value, val, to_copy - 1);
+	value[to_copy - 1] = '\0';
+}
+
+static size_t
+header_callback(char *buffer, size_t size, size_t nitems, void *userdata)
+{
+	struct header_data *header_data = userdata;
+	if (nitems >= DATE_LEN && strncasecmp(DATE, buffer, DATE_LEN) == 0) {
+		get_value_from_header(buffer + DATE_LEN, nitems - DATE_LEN,
+		    header_data->date, TIME_LEN);
+	} else if (nitems >= LAST_MODIFIED_LEN &&
+	    strncasecmp(LAST_MODIFIED, buffer, LAST_MODIFIED_LEN) == 0) {
+		get_value_from_header(buffer + LAST_MODIFIED_LEN,
+		    nitems - LAST_MODIFIED_LEN,
+		    header_data->last_modified, TIME_LEN);
+	}
+	return nitems;
+}
 
 static size_t
 write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
@@ -57,6 +100,7 @@ long
 fetch_xml_uri(struct xmldata *data)
 {
 	CURL *curl;
+	struct header_data header_data;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	char curl_errors[CURL_ERROR_SIZE];
@@ -67,6 +111,8 @@ fetch_xml_uri(struct xmldata *data)
 	int n;
 	long response_code;
 
+	header_data.date[0] = '\0';
+	header_data.last_modified[0] = '\0';
 	if (!data || !data->uri) {
 		log_warnx("missing url");
 		return -1;
@@ -89,10 +135,6 @@ fetch_xml_uri(struct xmldata *data)
 				fatal("%s - asprintf", __func__);
 			headers = curl_slist_append(headers, modified_since);
 		}
-		/*
-		 * XXXNF time from client should all be backup in case we cant
-		 * get a last_modified or date header
-		 */
 		/* get current gmt time to save for next time */
 		if ((current_time = time(NULL)) == (time_t)-1)
 			fatal("%s - time", __func__);
@@ -112,7 +154,9 @@ fetch_xml_uri(struct xmldata *data)
 	xcurl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	xcurl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
 	xcurl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+	xcurl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
 	xcurl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
+	xcurl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_data);
 	xcurl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_errors);
 	res = curl_easy_perform(curl);
 	if (res == CURLE_OK)
@@ -141,6 +185,11 @@ fetch_xml_uri(struct xmldata *data)
 			return -1;
 		}
 	}
+	if (strlen(header_data.last_modified) > 0)
+		strcpy(data->modified_since, header_data.last_modified);
+	else if (strlen(header_data.date) > 0)
+		strcpy(data->modified_since, header_data.date);
+
 	return response_code;
 }
 
