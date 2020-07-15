@@ -233,6 +233,7 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 			/* XXX NF better way to do this directory sep? */
 			path_delim[0] = '\0';
 			if (mkpath_at(dir, filename, USR_RWX_MODE) != 0) {
+				path_delim[0] = '/';
 				return NULL;
 			}
 			path_delim[0] = '/';
@@ -241,8 +242,12 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 		open_flags = "w";
 	}
 	fd = openat(dir, filename, fd_flags, USR_RW_MODE);
-	if (fd < 0 || !(f = fdopen(fd, open_flags)))
+	if (fd < 0)
 		return NULL;
+	if ((f = fdopen(fd, open_flags)) == NULL) {
+		close(fd);
+		return NULL;
+	}
 	return f;
 }
 

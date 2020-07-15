@@ -164,15 +164,16 @@ mv_delta(char *from, char *to)
 		}
 		/* zero sized files are delta "withdraws" */
 		if (node->fts_statp->st_size == 0) {
-			if(unlink(node->fts_path)) {
+			if (unlink(node->fts_path)) {
 				log_warnx("failed to delete %s",
 				    node->fts_path);
 				free(newpath);
 				return 1;
 			}
+			/* XXXNF check and delete newpath file as well */
 		/* otherwise move the file to the new location */
 		} else {
-			if(rename(node->fts_path, newpath)) {
+			if (rename(node->fts_path, newpath)) {
 				log_warnx("failed to move %s to %s",
 				    node->fts_path, newpath);
 				free(newpath);

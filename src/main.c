@@ -117,6 +117,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 				else {
 					log_warnx("failed to fetch delta %s",
 					    d->uri);
+					free_delta(d);
 					break;
 				}
 			}

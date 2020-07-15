@@ -89,9 +89,8 @@ free_delta_publish_data(struct delta_xml *delta_xml)
 static void
 free_delta_xml_data(struct xmldata *xml_data)
 {
-	struct delta_xml *delta_xml;
+	struct delta_xml *delta_xml = xml_data->xml_data;
 	XML_ParserFree(xml_data->parser);
-	delta_xml = xml_data->xml_data;
 	free(delta_xml->xmlns);
 	free(delta_xml->session_id);
 	zero_delta_global_data(delta_xml);
@@ -118,6 +117,7 @@ validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
 	unsigned char bin_hash[SHA256_DIGEST_LENGTH];
 	char *hash = delta_xml->publish_hash;
 	int first_read = 1;
+	SHA256_CTX ctx;
 
 	if (primary)
 		f = open_primary_uri_read(delta_xml->publish_uri, opts);
@@ -125,13 +125,16 @@ validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
 		f = open_working_uri_read(delta_xml->publish_uri, opts);
 	if (!f)
 		return VALIDATE_RETURN_NO_FILE;
-	SHA256_CTX ctx;
-	SHA256_Init(&ctx);
 	while ((buff_len = fread(read_buff, 1, BUFF_SIZE, f))) {
 		/* empty file = withdrawn */
-		if (first_read && buff_len == 0) {
-			fclose(f);
-			return VALIDATE_RETURN_FILE_DEL;
+		if (first_read) {
+			if (buff_len == 0) {
+				fclose(f);
+				return VALIDATE_RETURN_FILE_DEL;
+			} else {
+				SHA256_Init(&ctx);
+				first_read = 0;
+			}
 		}
 		SHA256_Update(&ctx, (const u_int8_t *)read_buff, buff_len);
 	}
@@ -162,11 +165,15 @@ verify_publish(struct xmldata *xml_data)
 	}
 	/* delta expects file to exist and match */
 	if (delta_xml->publish_hash) {
-		return v_return == VALIDATE_RETURN_HASH_MATCH;
+		if (v_return == VALIDATE_RETURN_HASH_MATCH)
+			return 1;
+		log_warnx("hash validation mismatch");
+		return 0;
 	/* delta expects file to not exist (or have been deleted) */
-	} else {
-		return v_return <= VALIDATE_RETURN_FILE_DEL;
-	}
+	} else if (v_return <= VALIDATE_RETURN_FILE_DEL)
+		return 1;
+	log_warnx("found file but without hash");
+	return 0;
 }
 
 static int
