@@ -153,12 +153,12 @@ verify_publish(struct xmldata *xml_data)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	enum validate_return v_return;
-	/* Check working dir first */
 
-	v_return = validate_publish_hash(delta_xml, xml_data->opts, 1);
+	/* Check working dir first */
+	v_return = validate_publish_hash(delta_xml, xml_data->opts, 0);
 	/* Check the primary dir if we haven't seen the file this delta run */
 	if (v_return == VALIDATE_RETURN_NO_FILE) {
-		v_return = validate_publish_hash(delta_xml, xml_data->opts, 0);
+		v_return = validate_publish_hash(delta_xml, xml_data->opts, 1);
 	}
 	/* delta expects file to exist and match */
 	if (delta_xml->publish_hash) {
