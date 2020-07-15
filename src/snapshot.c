@@ -85,9 +85,8 @@ free_snapshot_publish_data(struct snapshot_xml *snapshot_xml)
 static void
 free_snapshot_xml_data(struct xmldata *xml_data)
 {
-	struct snapshot_xml *snapshot_xml;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	XML_ParserFree(xml_data->parser);
-	snapshot_xml = (struct snapshot_xml*)xml_data->xml_data;
 	free(snapshot_xml->xmlns);
 	free(snapshot_xml->session_id);
 	zero_snapshot_global_data(snapshot_xml);

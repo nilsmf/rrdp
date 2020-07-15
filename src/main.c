@@ -33,7 +33,6 @@
  * - review use of err and bubble up most issues so deltas don't crash except on
  *   fatal mem/file issues
  * - add pledge calls
- * - use If-Modified-Since header for notification requests
  * - handle network failures with retries
  * - deal with withdraws (either ignore or leave as is)
  * - dont allow basedirs outside our dirs (check for ..)
