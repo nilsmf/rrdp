@@ -28,7 +28,7 @@ struct opts {
 	char *basedir_working;
 	int primary_dir;
 	int working_dir;
-	int single_delta;
+	int delta_limit;
 };
 
 int	b64_decode(char *, unsigned char **);

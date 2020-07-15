@@ -103,14 +103,19 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		return;
 	case NOTIFICATION_STATE_DELTAS:
 		expected_deltas = nxml->serial - nxml->current_serial;
-		if (opts->single_delta)
-			expected_deltas = 1;
+		if (opts->delta_limit &&
+		    opts->delta_limit < expected_deltas) {
+			expected_deltas = opts->delta_limit;
+			/* XXXNF Hack to make this work */
+			xml_data->modified_since[0] = '\0';
+		}
 		log_info("fetching deltas");
 		while (!TAILQ_EMPTY(&(nxml->delta_q))) {
 			d = TAILQ_FIRST(&(nxml->delta_q));
 			TAILQ_REMOVE(&(nxml->delta_q), d, q);
 			/* XXXCJ check that uri points to same host */
-			if (num_deltas < 1 || !opts->single_delta) {
+			if (num_deltas < opts->delta_limit ||
+			    !opts->delta_limit) {
 				if (fetch_delta_xml(d->uri, d->hash,
 				    opts, nxml) == 0)
 					num_deltas++;
@@ -174,7 +179,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: rrdp [-d cachedir] uri\n");
+	fprintf(stderr, "usage: rrdp [-l delta_limit][-d cachedir] uri\n");
 	exit(1);
 }
 
@@ -187,12 +192,15 @@ main(int argc, char **argv)
 	char *basedir;
 	int opt;
 	struct xmldata *xml_data;
-	opts.single_delta = 0;
+	opts.delta_limit = 0;
 
-	while ((opt = getopt(argc, argv, "d:")) != -1) {
+	while ((opt = getopt(argc, argv, "d:l:")) != -1) {
 		switch (opt) {
 		case 'd':
 			cachedir = optarg;
+			break;
+		case 'l':
+			opts.delta_limit = (int)strtol(optarg, NULL, BASE10);
 			break;
 		default:
 			usage();
