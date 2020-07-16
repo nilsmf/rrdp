@@ -2,8 +2,8 @@
 
 NOMAN=	1
 PROG=	rrdp
-SRCS=	delta.c fetch_util.c file_util.c main.c notification.c snapshot.c \
-	util.c
+SRCS=	delta.c fetch_util.c file_util.c log.c main.c notification.c \
+	snapshot.c util.c
 
 LDADD+= -lcrypto -lexpat
 LDADD+= -L/usr/local/lib -lcurl
