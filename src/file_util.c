@@ -30,7 +30,7 @@
 #include "util.h"
 
 int
-mkpath(const char *dir, mode_t mode)
+mkpath(const char *dir)
 {
 	struct stat sb;
 
@@ -42,14 +42,14 @@ mkpath(const char *dir, mode_t mode)
 		return 0;
 
 	char *newdir;
-	mkpath(dirname(newdir = xstrdup(dir)), mode);
-	int ret = mkdir(newdir, mode);
+	mkpath(dirname(newdir = xstrdup(dir)));
+	int ret = mkdir(newdir, S_IRWXU);
 	free(newdir);
 	return ret;
 }
 
 int
-mkpath_at(int fd, const char *dir, mode_t mode)
+mkpath_at(int fd, const char *dir)
 {
 	struct stat sb;
 
@@ -61,8 +61,8 @@ mkpath_at(int fd, const char *dir, mode_t mode)
 		return 0;
 
 	char *newdir;
-	mkpath_at(fd, dirname(newdir = xstrdup(dir)), mode);
-	int ret = mkdirat(fd, newdir, mode);
+	mkpath_at(fd, dirname(newdir = xstrdup(dir)));
+	int ret = mkdirat(fd, newdir, S_IRWXU);
 	free(newdir);
 	return ret;
 }
@@ -136,7 +136,7 @@ mv_delta(char *from, char *to)
 
 		/* create dirs in "to" as we discover them */
 		if (node->fts_info & FTS_D) {
-			if (mkpath(newpath, 0777)) {
+			if (mkpath(newpath)) {
 				log_warnx("failed to create %s",
 				    node->fts_path);
 				free(newpath);

@@ -17,11 +17,12 @@
 #ifndef _UTILH_
 #define _UTILH_
 
+#include <sys/stat.h>
+
 #define BASE10 10
 #define MAX_VERSION 1
 
 #define USR_RW_MODE S_IRUSR|S_IWUSR
-#define USR_RWX_MODE USR_RW_MODE|S_IXUSR
 
 struct opts {
 	char *basedir_primary;
