@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/stat.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -388,7 +389,7 @@ save_notification_data(struct xmldata *xml_data)
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
-	    O_WRONLY|O_CREAT|O_TRUNC, USR_RW_MODE);
+	    O_WRONLY|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
 	if (fd < 0 || !(f = fdopen(fd, "w")))
 		fatal("%s - fdopen", __func__);
 	/*

@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <stdio.h>
@@ -232,7 +233,7 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 		if ((path_delim = strrchr(filename, '/'))) {
 			/* XXX NF better way to do this directory sep? */
 			path_delim[0] = '\0';
-			if (mkpath_at(dir, filename, USR_RWX_MODE) != 0) {
+			if (mkpath_at(dir, filename) != 0) {
 				path_delim[0] = '/';
 				log_warn("%s - unable to make path", __func__);
 				return NULL;
@@ -242,7 +243,7 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 		fd_flags = O_WRONLY|O_CREAT|O_TRUNC;
 		open_flags = "w";
 	}
-	fd = openat(dir, filename, fd_flags, USR_RW_MODE);
+	fd = openat(dir, filename, fd_flags, S_IRUSR|S_IWUSR);
 	if (fd < 0)
 		return NULL;
 	if ((f = fdopen(fd, open_flags)) == NULL) {

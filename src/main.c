@@ -219,7 +219,7 @@ main(int argc, char **argv)
 		usage();
 
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
-	if (mkpath(basedir, USR_RWX_MODE) != 0)
+	if (mkpath(basedir) != 0)
 		fatal("failed to make basedir");
 	opts.basedir_primary = basedir;
 	opts.primary_dir = open(opts.basedir_primary, O_RDONLY|O_DIRECTORY);

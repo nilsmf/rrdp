@@ -39,15 +39,16 @@ struct header_data {
 static void
 get_value_from_header(char *buff, size_t buff_len, char *value, size_t val_len)
 {
-	int i;
+	size_t i, to_copy;
 	char *val = NULL;
+
 	for(i = 0; i < buff_len; i++) {
-		if (!isspace(buff[i])) {
+		if (!isspace((unsigned char)buff[i])) {
 			val = buff + i;
 			break;
 		}
 	}
-	int to_copy = buff_len - i;
+	to_copy = buff_len - i;
 	if (to_copy > val_len) {
 		to_copy = val_len;
 	}
