@@ -176,7 +176,7 @@ verify_publish(struct xmldata *xml_data)
 	return 0;
 }
 
-static int
+static void
 write_delta(struct xmldata *xml_data, int withdraw)
 {
 	struct delta_xml *delta_xml = xml_data->xml_data;
@@ -186,10 +186,10 @@ write_delta(struct xmldata *xml_data, int withdraw)
 
 	f = open_working_uri_write(delta_xml->publish_uri, xml_data->opts);
 	if (f == NULL)
-		err(1, "%s", __func__);
+		fatal("%s - file open fail", __func__);
 	if (withdraw) {
 		fclose(f);
-		return 0;
+		return;
 	}
 	/* decode b64 message */
 	decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
@@ -198,119 +198,164 @@ write_delta(struct xmldata *xml_data, int withdraw)
 		free(data_decoded);
 	}
 	fclose(f);
-	return delta_xml->publish_data_length;
 }
 
 static void
-delta_elem_start(void *data, const char *el, const char **attr)
+start_delta_elem(struct xmldata *xml_data, const char **attr)
 {
-	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 	struct delta_xml *delta_xml = xml_data->xml_data;
 	int i;
+
+	if (delta_xml->scope != DELTA_SCOPE_NONE)
+		PARSE_FAIL(p, "parse failed - entered delta elem"
+		    " unexpectedely");
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("xmlns", attr[i]) == 0)
+			delta_xml->xmlns = xstrdup(attr[i+1]);
+		else if (strcmp("version", attr[i]) == 0)
+			delta_xml->version =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		else if (strcmp("session_id", attr[i]) == 0)
+			delta_xml->session_id = xstrdup(attr[i+1]);
+		else if (strcmp("serial", attr[i]) == 0)
+			delta_xml->serial =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		else
+			PARSE_FAIL(p, "parse failed - non conforming "
+			    "attribute found in delta elem");
+	}
+	if (!(delta_xml->xmlns &&
+	      delta_xml->version &&
+	      delta_xml->session_id &&
+	      delta_xml->serial))
+		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
+	if (delta_xml->version <= 0 || delta_xml->version > MAX_VERSION)
+		PARSE_FAIL(p, "parse failed - invalid version");
+	if (strcmp(delta_xml->nxml->session_id, delta_xml->session_id) != 0)
+		PARSE_FAIL(p, "parse failed - session_id mismatch");
+
+	delta_xml->scope = DELTA_SCOPE_DELTA;
+}
+
+static void
+end_delta_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct delta_xml *delta_xml = xml_data->xml_data;
+
+	if (delta_xml->scope != DELTA_SCOPE_DELTA) {
+		PARSE_FAIL(p, "parse failed - exited delta "
+		    "elem unexpectedely");
+	}
+	delta_xml->scope = DELTA_SCOPE_END;
+
+}
+
+static void
+start_publish_withdraw_elem(struct xmldata *xml_data, const char **attr,
+    int withdraw)
+{
+	XML_Parser p = xml_data->parser;
+	struct delta_xml *delta_xml = xml_data->xml_data;
+	int i;
+
+	if (delta_xml->scope != DELTA_SCOPE_DELTA)
+		PARSE_FAIL(p, "parse failed - entered publish/withdraw "
+		    "elem unexpectedely");
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("uri", attr[i]) == 0)
+			delta_xml->publish_uri = xstrdup(attr[i+1]);
+		else if (strcmp("hash", attr[i]) == 0)
+			delta_xml->publish_hash = xstrdup(attr[i+1]);
+		else if (strcmp("xmlns", attr[i]) == 0);
+			/* XXX should we do nothing? */
+		else
+			PARSE_FAIL(p, "parse failed - non conforming "
+			    "attribute found in publish/withdraw elem");
+	}
+	if (!delta_xml->publish_uri)
+		PARSE_FAIL(p, "parse failed - incomplete publish/withdraw attributes");
+	if (withdraw && !delta_xml->publish_hash) {
+		PARSE_FAIL(p, "parse failed - incomplete withdraw attributes");
+	}
+	delta_xml->scope = DELTA_SCOPE_PUBLISH;
+
+}
+
+static void
+end_publish_withdraw_elem(struct xmldata *xml_data, int withdraw)
+{
+	XML_Parser p = xml_data->parser;
+	struct delta_xml *delta_xml = xml_data->xml_data;
+
+	if (delta_xml->scope != DELTA_SCOPE_PUBLISH) {
+		PARSE_FAIL(p, "parse failed - exited publish/withdraw "
+		    "elem unexpectedely");
+	}
+	/* XXXNF this check looks dodgy */
+	if (!delta_xml->publish_uri) {
+		PARSE_FAIL(p, "parse failed - no data recovered from "
+		    "publish/withdraw elem");
+	}
+	/*
+	 * TODO should we never keep this much and stream it straight to
+	 * staging file?
+	 */
+	if (verify_publish(xml_data) == 0) {
+		PARSE_FAIL(p, "failed to verify delta hash:\n%s\n%s\n%s",
+		    delta_xml->publish_hash, delta_xml->publish_uri,
+		    xml_data->opts->basedir_working);
+	}
+
+	write_delta(xml_data, withdraw);
+	free_delta_publish_data(delta_xml);
+	delta_xml->scope = DELTA_SCOPE_DELTA;
+}
+
+static void
+delta_xml_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 
 	/*
 	 * Can only enter here once as we should have no ways to get back to
 	 * NONE scope
 	 */
-	if (strcmp("delta", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_NONE)
-			err(1, "parse failed - entered delta elem "
-			    "unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("xmlns", attr[i]) == 0)
-				delta_xml->xmlns = xstrdup(attr[i+1]);
-			else if (strcmp("version", attr[i]) == 0)
-				delta_xml->version =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else if (strcmp("session_id", attr[i]) == 0)
-				delta_xml->session_id = xstrdup(attr[i+1]);
-			else if (strcmp("serial", attr[i]) == 0)
-				delta_xml->serial =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in delta elem");
-		}
-		if (!(delta_xml->xmlns &&
-		      delta_xml->version &&
-		      delta_xml->session_id &&
-		      delta_xml->serial))
-			err(1, "parse failed - incomplete delta attributes");
-		if (delta_xml->version <= 0 ||
-		    delta_xml->version > MAX_VERSION)
-			err(1, "parse failed - invalid version");
-		if (strcmp(delta_xml->nxml->session_id, delta_xml->session_id)
-		    != 0)
-			err(1, "parse failed - session_id mismatch");
-
-		delta_xml->scope = DELTA_SCOPE_DELTA;
+	if (strcmp("delta", el) == 0)
+		start_delta_elem(data, attr);
 	/*
 	 * Will enter here multiple times, BUT never nested. will start
 	 * collecting character data in that handler
 	 * mem is cleared in end block, (TODO or on parse failure)
 	 */
-	} else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_DELTA)
-			err(1, "parse failed - entered publish "
-			    "elem unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0)
-				delta_xml->publish_uri = xstrdup(attr[i+1]);
-			else if (strcmp("hash", attr[i]) == 0)
-				delta_xml->publish_hash = xstrdup(attr[i+1]);
-			else if (strcmp("xmlns", attr[i]) == 0);
-				/* XXX should we do nothing? */
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in publish elem");
-		}
-		if (!delta_xml->publish_uri)
-			err(1, "parse failed - incomplete publish attributes");
-		if (strcmp("withdraw", el) == 0 && !delta_xml->publish_hash) {
-			err(1, "parse failed - incomplete withdraw attributes");
-		}
-		delta_xml->scope = DELTA_SCOPE_PUBLISH;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	else if (strcmp("publish", el) == 0)
+		start_publish_withdraw_elem(data, attr, 0);
+	else if (strcmp("withdraw", el) == 0)
+		start_publish_withdraw_elem(data, attr, 1);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 static void
-delta_elem_end(void *data, const char *el)
+delta_xml_elem_end(void *data, const char *el)
 {
 	struct xmldata *xml_data = data;
-	struct delta_xml *delta_xml = xml_data->xml_data;
-	if (strcmp("delta", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_DELTA)
-			err(1, "parse failed - exited delta "
-			    "elem unexpectedely");
-		delta_xml->scope = DELTA_SCOPE_END;
-	}
+	XML_Parser p = xml_data->parser;
+
+	if (strcmp("delta", el) == 0)
+		end_delta_elem(data);
 	/*
 	 * TODO does this allow <publish></withdraw> or is that caught by basic
 	 * xml parsing
 	 */
-	else if (strcmp("publish", el) == 0 || strcmp("withdraw", el) == 0) {
-		if (delta_xml->scope != DELTA_SCOPE_PUBLISH)
-			err(1, "parse failed - exited publish "
-			    "elem unexpectedely");
-		if (!delta_xml->publish_uri)
-			err(1, "parse failed - no data recovered from "
-			    "publish elem");
-		/*
-		 * TODO should we never keep this much and stream it straight to
-		 * staging file?
-		 */
-		if (!verify_publish(xml_data))
-			err(1, "failed to verify delta hash");
-
-		if (strcmp("publish", el) == 0) {
-			write_delta(xml_data, 0);
-		} else
-			write_delta(xml_data, 1);
-		free_delta_publish_data(delta_xml);
-		delta_xml->scope = DELTA_SCOPE_DELTA;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	else if (strcmp("publish", el) == 0)
+		end_publish_withdraw_elem(data, 0);
+	else if (strcmp("withdraw", el) == 0)
+		end_publish_withdraw_elem(data, 1);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 static void
@@ -354,9 +399,9 @@ setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
-		err(1, "XML_ParserCreate");
-	XML_SetElementHandler(xml_data->parser, delta_elem_start,
-	    delta_elem_end);
+		fatalx("%s - XML_ParserCreate", __func__);
+	XML_SetElementHandler(xml_data->parser, delta_xml_elem_start,
+	    delta_xml_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, delta_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 

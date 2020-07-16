@@ -234,6 +234,7 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 			path_delim[0] = '\0';
 			if (mkpath_at(dir, filename, USR_RWX_MODE) != 0) {
 				path_delim[0] = '/';
+				log_warn("%s - unable to make path", __func__);
 				return NULL;
 			}
 			path_delim[0] = '/';

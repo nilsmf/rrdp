@@ -26,7 +26,7 @@
 #include "log.h"
 #include "file_util.h"
 
-static void
+static int
 add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
     int serial)
 {
@@ -42,9 +42,10 @@ add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
 	n = TAILQ_LAST(&nxml->delta_q, delta_q);
 	if (!n || serial < n->serial) {
 		TAILQ_FOREACH(n, &nxml->delta_q, q) {
-			if (n->serial == serial)
-				err(1, "duplicate delta serial %d in "
-				    "notification.xml", serial);
+			if (n->serial == serial) {
+				warnx("duplicate delta serial %d ", serial);
+				return 0;
+			}
 			if (n->serial < serial)
 				break;
 		}
@@ -54,6 +55,8 @@ add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
 		TAILQ_INSERT_AFTER(&nxml->delta_q, n, d, q);
 	else
 		TAILQ_INSERT_HEAD(&nxml->delta_q, d, q);
+
+	return 1;
 }
 
 void
@@ -91,7 +94,7 @@ free_notification_xml(struct notification_xml *nxml)
 		}
 		free(nxml);
 	} else
-		err(1, "%s", __func__);
+		fatalx("%s", __func__);
 }
 
 void
@@ -151,8 +154,7 @@ check_state(struct notification_xml *nxml)
 	}
 	/* all deltas present? */
 	if (serial_counter != serial_diff) {
-		log_warnx("Mismatch for serial diff vs. "
-		       "actual in order serials");
+		log_warnx("Mismatch # expected deltas vs. # found deltas");
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
@@ -173,145 +175,205 @@ log_notification_xml(struct notification_xml *notification_xml)
 	log_info("current_serial: %d", notification_xml->current_serial);
 	log_info("session_id: %s", notification_xml->session_id ?: "NULL");
 	log_info("serial: %d", notification_xml->serial);
-	log_info("snapshot_uri: %s",
-	    notification_xml->snapshot_uri ?: "NULL");
+	log_info("snapshot_uri: %s", notification_xml->snapshot_uri ?: "NULL");
 	log_info("snapshot_hash: %s",
 	    notification_xml->snapshot_hash ?: "NULL");
 }
 
+
 static void
-notification_elem_start(void *data, const char *el, const char **attr)
+start_notification_elem(struct xmldata *xml_data, const char **attr)
 {
-	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 	struct notification_xml *notification_xml = xml_data->xml_data;
 	int i;
+
+	if (notification_xml->scope != NOTIFICATION_SCOPE_START) {
+		PARSE_FAIL(p, "parse failed - entered notification "
+		    "elem unexpectedely");
+	}
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("xmlns", attr[i]) == 0)
+			notification_xml->xmlns = xstrdup(attr[i+1]);
+		else if (strcmp("version", attr[i]) == 0) {
+			notification_xml->version =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		} else if (strcmp("session_id", attr[i]) == 0)
+			notification_xml->session_id = xstrdup(attr[i+1]);
+		else if (strcmp("serial", attr[i]) == 0) {
+			notification_xml->serial =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		} else {
+			PARSE_FAIL(p, "parse failed - non conforming "
+			    "attribute found in notification elem");
+		}
+	}
+	if (!(notification_xml->xmlns &&
+	      notification_xml->version &&
+	      notification_xml->session_id &&
+	      notification_xml->serial)) {
+		PARSE_FAIL(p, "parse failed - incomplete "
+		    "notification attributes");
+	}
+
+	if (notification_xml->version <= 0 ||
+	    notification_xml->version > MAX_VERSION) {
+		PARSE_FAIL(p, "parse failed - invalid version");
+	}
+	check_state(notification_xml);
+
+	notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
+}
+
+static void
+end_notification_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+
+	if (notification_xml->scope !=
+	    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+		PARSE_FAIL(p, "parse failed - exited notification "
+		    "elem unexpectedely");
+	}
+	notification_xml->scope = NOTIFICATION_SCOPE_END;
+	/* check the state to see if we have enough delta info */
+	check_state(notification_xml);
+}
+
+static void
+start_snapshot_elem(struct xmldata *xml_data, const char **attr)
+{
+	XML_Parser p = xml_data->parser;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+	int i;
+
+	if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
+		PARSE_FAIL(p, "parse failed - entered snapshot "
+		    "elem unexpectedely");
+	}
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("uri", attr[i]) == 0)
+			notification_xml->snapshot_uri = xstrdup(attr[i+1]);
+		else if (strcmp("hash", attr[i]) == 0)
+			notification_xml->snapshot_hash = xstrdup(attr[i+1]);
+		else {
+			PARSE_FAIL(p, "parse failed - non conforming "
+			    "attribute found in snapshot elem");
+		}
+	}
+	if (!notification_xml->snapshot_uri ||
+	    !notification_xml->snapshot_hash) {
+		PARSE_FAIL(p, "parse failed - incomplete snapshot attributes");
+	}
+	notification_xml->scope = NOTIFICATION_SCOPE_SNAPSHOT;
+}
+
+static void
+end_snapshot_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+
+	if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT) {
+		PARSE_FAIL(p, "parse failed - exited snapshot "
+		    "elem unexpectedely");
+	}
+	notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
+}
+
+static void
+start_delta_elem(struct xmldata *xml_data, const char **attr)
+{
+	XML_Parser p = xml_data->parser;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+	int i;
+	const char *delta_uri = NULL;
+	const char *delta_hash = NULL;
+	int delta_serial = 0;
+
+	if (notification_xml->scope !=
+	    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+		PARSE_FAIL(p, "parse failed - entered delta "
+		    "elem unexpectedely");
+	}
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("uri", attr[i]) == 0)
+			delta_uri = attr[i+1];
+		else if (strcmp("hash", attr[i]) == 0)
+			delta_hash = attr[i+1];
+		else if (strcmp("serial", attr[i]) == 0)
+			delta_serial = (int)strtol(attr[i+1], NULL, BASE10);
+		else {
+			PARSE_FAIL(p, "parse failed - non conforming "
+			    "attribute found in snapshot elem");
+		}
+	}
+	/* Only add to the list if we are relevant */
+	if (!delta_uri || !delta_hash || !delta_serial)
+		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
+
+	if (notification_xml->current_serial &&
+	    notification_xml->current_serial < delta_serial) {
+		if (add_delta(notification_xml, delta_uri,
+		    delta_hash, delta_serial) == 0) {
+			PARSE_FAIL(p, "parse failed - adding delta failed");
+		}
+		log_info("adding delta %d %s", delta_serial, delta_uri);
+	}
+	notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
+}
+
+static void
+end_delta_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct notification_xml *notification_xml = xml_data->xml_data;
+
+	if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA)
+		PARSE_FAIL(p, "parse failed - exited delta elem unexpectedely");
+	notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
+}
+
+static void
+notification_xml_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 
 	/*
 	 * Can only enter here once as we should have no ways to get back to
 	 * START scope
 	 */
-	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_START)
-			err(1, "parse failed - entered notification "
-			    "elem unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("xmlns", attr[i]) == 0)
-				notification_xml->xmlns = xstrdup(attr[i+1]);
-			else if (strcmp("version", attr[i]) == 0)
-				notification_xml->version =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else if (strcmp("session_id", attr[i]) == 0)
-				notification_xml->session_id =
-				    xstrdup(attr[i+1]);
-			else if (strcmp("serial", attr[i]) == 0)
-				notification_xml->serial =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in notification elem");
-		}
-		if (!(notification_xml->xmlns &&
-		      notification_xml->version &&
-		      notification_xml->session_id &&
-		      notification_xml->serial))
-			err(1, "parse failed - incomplete "
-			    "notification attributes");
-
-		if (notification_xml->version <= 0 ||
-		    notification_xml->version > MAX_VERSION)
-			err(1, "parse failed - invalid version");
-		check_state(notification_xml);
-
-		notification_xml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
+	if (strcmp("notification", el) == 0)
+		start_notification_elem(data, attr);
 	/*
 	 * Will enter here multiple times, BUT never nested. will start
 	 * collecting character data in that handler
 	 * mem is cleared in end block, (TODO or on parse failure)
 	 */
-	} else if (strcmp("snapshot", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_NOTIFICATION)
-			err(1, "parse failed - entered snapshot "
-			    "elem unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0)
-				notification_xml->snapshot_uri =
-				    xstrdup(attr[i+1]);
-			else if (strcmp("hash", attr[i]) == 0)
-				notification_xml->snapshot_hash =
-				    xstrdup(attr[i+1]);
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in snapshot elem");
-		}
-		if (!notification_xml->snapshot_uri ||
-		    !notification_xml->snapshot_hash)
-			err(1, "parse failed - incomplete snapshot attributes");
-		notification_xml->scope = NOTIFICATION_SCOPE_SNAPSHOT;
-	} else if (strcmp("delta", el) == 0) {
-		const char *delta_uri = NULL;
-		const char *delta_hash = NULL;
-		int delta_serial = 0;
-
-		if (notification_xml->scope !=
-		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
-			err(1, "parse failed - entered delta "
-			    "elem unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0)
-				delta_uri = attr[i+1];
-			else if (strcmp("hash", attr[i]) == 0)
-				delta_hash = attr[i+1];
-			else if (strcmp("serial", attr[i]) == 0)
-				delta_serial =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in snapshot elem");
-		}
-		/* Only add to the list if we are relevant */
-		if (!delta_uri || !delta_hash || !delta_serial)
-			err(1, "parse failed - incomplete delta attributes");
-
-		if (notification_xml->current_serial &&
-		    notification_xml->current_serial < delta_serial) {
-			add_delta(notification_xml,
-			    delta_uri, delta_hash, delta_serial);
-			log_info("adding delta %d %s",
-			    delta_serial, delta_uri);
-		}
-		notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	else if (strcmp("snapshot", el) == 0)
+		start_snapshot_elem(data, attr);
+	else if (strcmp("delta", el) == 0)
+		start_delta_elem(data, attr);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 static void
-notification_elem_end(void *data, const char *el)
+notification_xml_elem_end(void *data, const char *el)
 {
 	struct xmldata *xml_data = data;
-	struct notification_xml *notification_xml = xml_data->xml_data;
+	XML_Parser p = xml_data->parser;
 
-	if (strcmp("notification", el) == 0) {
-		if (notification_xml->scope !=
-		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
-			err(1, "parse failed - exited notification "
-			    "elem unexpectedely");
-		notification_xml->scope = NOTIFICATION_SCOPE_END;
-		/* check the state to see if we have enough delta info */
-		check_state(notification_xml);
-	} else if (strcmp("snapshot", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_SNAPSHOT)
-			err(1, "parse failed - exited snapshot "
-			    "elem unexpectedely");
-		notification_xml->scope =
-		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
-	} else if (strcmp("delta", el) == 0) {
-		if (notification_xml->scope != NOTIFICATION_SCOPE_DELTA)
-			err(1, "parse failed - exited delta "
-			    "elem unexpectedely");
-		notification_xml->scope =
-		    NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	if (strcmp("notification", el) == 0)
+		end_notification_elem(data);
+	else if (strcmp("snapshot", el) == 0)
+		end_snapshot_elem(data);
+	else if (strcmp("delta", el) == 0)
+		end_delta_elem(data);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 /* XXXCJ this needs more cleanup and error checking */
@@ -319,7 +381,7 @@ void
 save_notification_data(struct xmldata *xml_data)
 {
 	int fd;
-	FILE *f;
+	FILE *f = NULL;
 	struct notification_xml *nxml = xml_data->xml_data;
 
 	log_info("saving %s/%s", xml_data->opts->basedir_primary,
@@ -328,7 +390,7 @@ save_notification_data(struct xmldata *xml_data)
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
 	    O_WRONLY|O_CREAT|O_TRUNC, USR_RW_MODE);
 	if (fd < 0 || !(f = fdopen(fd, "w")))
-		err(1, "%s", __func__);
+		fatal("%s - fdopen", __func__);
 	/*
 	 * TODO maybe this should actually come from the snapshot/deltas that
 	 * get written might not matter if we have verified consistency already
@@ -355,13 +417,13 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME, O_RDONLY);
 	if (fd < 0 || !(f = fdopen(fd, "r"))) {
-		log_warnx("no state file found %d", fd);
+		log_warnx("no state file found");
 		return;
 	}
 
 	while (l < 3 && (s = getline(&line, &len, f)) != -1) {
 		/* must have at least 1 char serial / session */
-		if (s <= 1) {
+		if (s <= 1 && l < 2) {
 			fclose(f);
 			log_warnx("bad notification file");
 			return;
@@ -410,10 +472,10 @@ new_notification_xml_data(char *uri, struct opts *opts)
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
-		err(1, "XML_ParserCreate");
+		fatalx("%s - XML_ParserCreate", __func__);
 
-	XML_SetElementHandler(xml_data->parser, notification_elem_start,
-	    notification_elem_end);
+	XML_SetElementHandler(xml_data->parser, notification_xml_elem_start,
+	    notification_xml_elem_end);
 	XML_SetUserData(xml_data->parser, xml_data);
 
 	return xml_data;

@@ -26,6 +26,7 @@
 #include "snapshot.h"
 #include "log.h"
 #include "file_util.h"
+#include "fetch_util.h"
 
 enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
@@ -93,7 +94,7 @@ free_snapshot_xml_data(struct xmldata *xml_data)
 	free_snapshot_publish_data(xml_data->xml_data);
 }
 
-static int
+static void
 write_snapshot_publish(struct xmldata *xml_data)
 {
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
@@ -103,7 +104,7 @@ write_snapshot_publish(struct xmldata *xml_data)
 
 	f = open_working_uri_write(snapshot_xml->publish_uri, xml_data->opts);
 	if (f == NULL)
-		err(1, "%s", __func__);
+		fatal("%s - file open fail", __func__);
 	/* decode b64 message */
 	decoded_len = b64_decode(snapshot_xml->publish_data, &data_decoded);
 	if (decoded_len > 0) {
@@ -111,101 +112,148 @@ write_snapshot_publish(struct xmldata *xml_data)
 		free(data_decoded);
 	}
 	fclose(f);
-	return snapshot_xml->publish_data_length;
 }
 
 static void
-snapshot_elem_start(void *data, const char *el, const char **attr)
+start_snapshot_elem(struct xmldata *xml_data, const char **attr)
 {
-	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
 	int i;
+
+	if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE) {
+		PARSE_FAIL(p,
+		    "parse failed - entered snapshot elem unexpectedely");
+	}
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("xmlns", attr[i]) == 0)
+			snapshot_xml->xmlns = xstrdup(attr[i+1]);
+		else if (strcmp("version", attr[i]) == 0)
+			snapshot_xml->version =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		else if (strcmp("session_id", attr[i]) == 0)
+			snapshot_xml->session_id = xstrdup(attr[i+1]);
+		else if (strcmp("serial", attr[i]) == 0)
+			snapshot_xml->serial =
+			    (int)strtol(attr[i+1], NULL, BASE10);
+		else {
+			PARSE_FAIL(p,
+			    "parse failed - non conforming "
+			    "attribute found in snapshot elem");
+		}
+	}
+	if (!(snapshot_xml->xmlns &&
+	      snapshot_xml->version &&
+	      snapshot_xml->session_id &&
+	      snapshot_xml->serial)) {
+		PARSE_FAIL(p,
+		    "parse failed - incomplete snapshot attributes");
+	}
+	if (snapshot_xml->version <= 0 ||
+	    snapshot_xml->version > MAX_VERSION)
+		PARSE_FAIL(p, "parse failed - invalid version");
+	if (strcmp(snapshot_xml->nxml->session_id,
+	    snapshot_xml->session_id) != 0)
+		PARSE_FAIL(p, "parse failed - session_id mismatch");
+	if (snapshot_xml->nxml->serial != snapshot_xml->serial)
+		PARSE_FAIL(p, "parse failed - serial mismatch");
+
+	snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
+}
+
+static void
+end_snapshot_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+
+	if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
+		PARSE_FAIL(p, "parse failed - exited snapshot "
+		    "elem unexpectedely");
+	}
+	snapshot_xml->scope = SNAPSHOT_SCOPE_END;
+}
+
+static void
+start_publish_elem(struct xmldata *xml_data, const char **attr)
+{
+	XML_Parser p = xml_data->parser;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+	int i;
+
+	if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
+		PARSE_FAIL(p, "parse failed - entered publish "
+		    "elem unexpectedely");
+	}
+	for (i = 0; attr[i]; i += 2) {
+		if (strcmp("uri", attr[i]) == 0)
+			snapshot_xml->publish_uri = xstrdup(attr[i+1]);
+		else if (strcmp("xmlns", attr[i]) == 0);
+			/* XXX should we do nothing? */
+		else {
+			PARSE_FAIL(p, "parse failed - non conforming"
+			    " attribute found in publish elem");
+		}
+	}
+	if (!snapshot_xml->publish_uri)
+		PARSE_FAIL(p, "parse failed - incomplete publish attributes");
+	snapshot_xml->scope = SNAPSHOT_SCOPE_PUBLISH;
+}
+
+static void
+end_publish_elem(struct xmldata *xml_data)
+{
+	XML_Parser p = xml_data->parser;
+	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
+
+	if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH) {
+		PARSE_FAIL(p, "parse failed - exited publish "
+		    "elem unexpectedely");
+	}
+	if (!snapshot_xml->publish_uri) {
+		PARSE_FAIL(p, "parse failed - no data recovered "
+		    "from publish elem");
+	}
+	write_snapshot_publish(xml_data);
+	free_snapshot_publish_data(snapshot_xml);
+	snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
+}
+
+static void
+snapshot_xml_elem_start(void *data, const char *el, const char **attr)
+{
+	struct xmldata *xml_data = data;
+	XML_Parser p = xml_data->parser;
 
 	/*
 	 * Can only enter here once as we should have no ways to get back to
 	 * NONE scope
 	 */
-	if (strcmp("snapshot", el) == 0) {
-		if (snapshot_xml->scope != SNAPSHOT_SCOPE_NONE)
-			err(1, "parse failed - entered snapshot elem"
-			    "unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("xmlns", attr[i]) == 0)
-				snapshot_xml->xmlns = xstrdup(attr[i+1]);
-			else if (strcmp("version", attr[i]) == 0)
-				snapshot_xml->version =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else if (strcmp("session_id", attr[i]) == 0)
-				snapshot_xml->session_id = xstrdup(attr[i+1]);
-			else if (strcmp("serial", attr[i]) == 0)
-				snapshot_xml->serial =
-				    (int)strtol(attr[i+1], NULL, BASE10);
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in snapshot elem");
-		}
-		if (!(snapshot_xml->xmlns &&
-		      snapshot_xml->version &&
-		      snapshot_xml->session_id &&
-		      snapshot_xml->serial))
-			err(1, "parse failed - incomplete snapshot attributes");
-		if (snapshot_xml->version <= 0 ||
-		    snapshot_xml->version > MAX_VERSION)
-			err(1, "parse failed - invalid version");
-		if (strcmp(snapshot_xml->nxml->session_id,
-		    snapshot_xml->session_id) != 0)
-			err(1, "parse failed - session_id mismatch");
-		if (snapshot_xml->nxml->serial != snapshot_xml->serial)
-			err(1, "parse failed - serial mismatch");
-
-		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
+	if (strcmp("snapshot", el) == 0)
+		start_snapshot_elem(data, attr);
 	/*
 	 * Will enter here multiple times, BUT never nested. will start
 	 * collecting character data in that handler mem is cleared in end
 	 * block, (TODO or on parse failure)
 	 */
-	} else if (strcmp("publish", el) == 0) {
-		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
-			err(1, "parse failed - entered publish "
-			    "elem unexpectedely");
-		for (i = 0; attr[i]; i += 2) {
-			if (strcmp("uri", attr[i]) == 0)
-				snapshot_xml->publish_uri = xstrdup(attr[i+1]);
-			else if (strcmp("xmlns", attr[i]) == 0);
-				/* XXX should we do nothing? */
-			else
-				err(1, "parse failed - non conforming "
-				    "attribute found in publish elem");
-		}
-		if (!snapshot_xml->publish_uri)
-			err(1, "parse failed - incomplete publish attributes");
-		snapshot_xml->scope = SNAPSHOT_SCOPE_PUBLISH;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	else if (strcmp("publish", el) == 0)
+		start_publish_elem(data, attr);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 static void
-snapshot_elem_end(void *data, const char *el)
+snapshot_xml_elem_end(void *data, const char *el)
 {
 	struct xmldata *xml_data = data;
-	struct snapshot_xml *snapshot_xml = xml_data->xml_data;
-	if (strcmp("snapshot", el) == 0) {
-		if (snapshot_xml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
-			err(1, "parse failed - exited snapshot "
-			    "elem unexpectedely");
-		snapshot_xml->scope = SNAPSHOT_SCOPE_END;
-	} else if (strcmp("publish", el) == 0) {
-		if (snapshot_xml->scope != SNAPSHOT_SCOPE_PUBLISH)
-			err(1, "parse failed - exited publish "
-			    "elem unexpectedely");
-		if (!snapshot_xml->publish_uri)
-			err(1, "parse failed - no data recovered "
-			    "from publish elem");
-		write_snapshot_publish(xml_data);
-		free_snapshot_publish_data(snapshot_xml);
-		snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
-	} else
-		err(1, "parse failed - unexpected elem exit found");
+	XML_Parser p = xml_data->parser;
+
+	if (strcmp("snapshot", el) == 0)
+		end_snapshot_elem(data);
+	else if (strcmp("publish", el) == 0)
+		end_publish_elem(data);
+	else
+		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
 static void
@@ -249,9 +297,9 @@ setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
-		err(1, "XML_ParserCreate");
-	XML_SetElementHandler(xml_data->parser, snapshot_elem_start,
-	    snapshot_elem_end);
+		fatalx("%s - XML_ParserCreate", __func__);
+	XML_SetElementHandler(xml_data->parser, snapshot_xml_elem_start,
+	    snapshot_xml_elem_end);
 	XML_SetCharacterDataHandler(xml_data->parser, snapshot_content_handler);
 	XML_SetUserData(xml_data->parser, xml_data);
 

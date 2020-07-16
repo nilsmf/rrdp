@@ -26,6 +26,13 @@
 #define TIME_FORMAT "%a, %d %b %Y %T GMT"
 #define TIME_LEN 30
 
+/* save everyone doing this code over and over */
+#define PARSE_FAIL(p, ...) do {		\
+	XML_StopParser(p, XML_FALSE);	\
+	log_warnx(__VA_ARGS__);		\
+	return;				\
+} while(0)
+
 struct xmldata {
 	struct opts *opts;
 	char *uri;

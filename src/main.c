@@ -43,7 +43,7 @@ rm_working_dir(struct opts *opts)
 {
 	int ret;
 	if (close(opts->working_dir))
-		err(1, "%s", __func__);
+		fatal("%s - close", __func__);
 	if ((ret = rm_dir(opts->basedir_working, 0)) != 0) {
 		log_warnx("%s - failed to remove working dir", __func__);
 		ret = 1;
@@ -68,12 +68,12 @@ fetch_notification_xml(char* uri, struct opts *opts)
 	long res;
 	res = fetch_xml_uri(xml_data);
 	if (res != 200 && res != 304)
-		errx(1, "%s", __func__);
+		fatalx("%s", __func__);
 
 	struct notification_xml *nxml = xml_data->xml_data;
 
 	if (!nxml)
-		errx(1, "no notification_xml available");
+		fatalx("no notification_xml available");
 	if (res == 304) {
 		log_info("Got up to date return code from server");
 		nxml->state = NOTIFICATION_STATE_NONE;
@@ -95,7 +95,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 
 	switch (nxml->state) {
 	case NOTIFICATION_STATE_ERROR:
-		errx(1, "NOTIFICATION_STATE_ERROR");
+		fatalx("NOTIFICATION_STATE_ERROR");
 	case NOTIFICATION_STATE_NONE:
 		rm_working_dir(opts);
 		log_info("up to date");
@@ -157,7 +157,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
 		    nxml->snapshot_hash, opts, nxml) != 0) {
 			rm_working_dir(opts);
-			err(1, "failed to run snapshot");
+			fatalx("failed to run snapshot");
 		}
 		/*
 		 * XXXNF bad things can happen here if we fail we have no
@@ -168,7 +168,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		    opts->basedir_primary) != 0) {
 			rm_primary_dir(opts);
 			rm_working_dir(opts);
-			err(1, "failed to update");
+			fatal("failed to update");
 		}
 		log_info("snapshot move success");
 	}
@@ -220,11 +220,11 @@ main(int argc, char **argv)
 
 	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
 	if (mkpath(basedir, USR_RWX_MODE) != 0)
-		err(1, "failed to make basedir");
+		fatal("failed to make basedir");
 	opts.basedir_primary = basedir;
 	opts.primary_dir = open(opts.basedir_primary, O_RDONLY|O_DIRECTORY);
 	if (opts.primary_dir < 0)
-		err(1, "failed to open dir: %s", basedir);
+		fatal("failed to open dir: %s", basedir);
 	make_workdir(basedir, &opts);
 	xml_data = fetch_notification_xml(uri, &opts);
 	process_notification_xml(xml_data, &opts);

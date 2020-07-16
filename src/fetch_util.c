@@ -84,7 +84,7 @@ write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 		fprintf(stderr, "Parse error at line %lu:\n%s\n",
 			XML_GetCurrentLineNumber(p),
 			XML_ErrorString(XML_GetErrorCode(p)));
-		err(1, "parse failed - basic xml error");
+		return 0;
 	}
 	return nmemb;
 }
@@ -161,6 +161,8 @@ fetch_xml_uri(struct xmldata *data)
 	res = curl_easy_perform(curl);
 	if (res == CURLE_OK)
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	else if (res == 23)
+		log_warnx("aborting reading curl due to parse failure");
 	else
 		log_warnx("curl not ok (%d): %s", res, curl_errors);
 
