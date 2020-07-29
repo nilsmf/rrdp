@@ -186,7 +186,7 @@ int
 main(int argc, char **argv)
 {
 	struct opts opts;
-	char *cachedir = "/tmp/rrdp";
+	char *cachedir = NULL;
 	char *uri = NULL;
 	char *basedir;
 	int opt;
@@ -218,7 +218,10 @@ main(int argc, char **argv)
 	else
 		usage();
 
-	basedir = generate_basepath_from_uri(uri, cachedir, "https://");
+	if (cachedir == NULL)
+		basedir = generate_basepath_from_uri(uri, "/tmp/rrdp", "https://");
+	else
+		basedir = xstrdup(cachedir);
 	if (mkpath(basedir) != 0)
 		fatal("failed to make basedir");
 	opts.basedir_primary = basedir;
