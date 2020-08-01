@@ -19,6 +19,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <unistd.h>
 #include <curl/curl.h>
 
 #include "fetch_util.h"
@@ -97,19 +98,36 @@ xcurl_easy_setopt(CURL *handle, CURLoption option, void *parameter) {
 		fatalx("failed to set curl option");
 }
 
+static int
+hash_check(unsigned char *obuff, const char *hash) {
+	int n;
+	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
+
+	for (n = 0; n < SHA256_DIGEST_LENGTH; n++) {
+		sprintf(obuff_hex + 2*n, "%02x",
+		    (unsigned int)obuff[n]);
+	}
+	if (strncasecmp(hash, obuff_hex,
+	    SHA256_DIGEST_LENGTH*2)) {
+		log_warnx("hash mismatch \n   '%.*s'\nvs '%.*s'",
+		    SHA256_DIGEST_LENGTH*2, hash,
+		    SHA256_DIGEST_LENGTH*2, obuff_hex);
+		return -1;
+	}
+	return 0;
+}
+
 long
 fetch_xml_uri(struct xmldata *data)
 {
 	CURL *curl;
 	struct header_data header_data;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
 	char curl_errors[CURL_ERROR_SIZE];
 	struct curl_slist *headers = NULL;
 	char *modified_since = NULL;
 	time_t current_time;
 	struct tm *gmt_time;
-	int n;
 	long response_code;
 
 	header_data.date[0] = '\0';
@@ -176,17 +194,8 @@ fetch_xml_uri(struct xmldata *data)
 	if (res != CURLE_OK)
 		return -1;
 	if (data->hash) {
-		for (n = 0; n < SHA256_DIGEST_LENGTH; n++) {
-			sprintf(obuff_hex + 2*n, "%02x",
-			    (unsigned int)obuff[n]);
-		}
-		if (strncasecmp(data->hash, obuff_hex,
-		    SHA256_DIGEST_LENGTH*2)) {
-			log_warnx("hash mismatch \n   '%.*s'\nvs '%.*s'",
-			    SHA256_DIGEST_LENGTH*2, data->hash,
-			    SHA256_DIGEST_LENGTH*2, obuff_hex);
+		if (hash_check(obuff, data->hash) == -1)
 			return -1;
-		}
 	}
 	if (strlen(header_data.last_modified) > 0)
 		strcpy(data->modified_since, header_data.last_modified);
@@ -196,3 +205,50 @@ fetch_xml_uri(struct xmldata *data)
 	return response_code;
 }
 
+long
+ftp_fetch_xml(struct xmldata *data) {
+	unsigned char obuff[SHA256_DIGEST_LENGTH];
+	int fds[2];
+	int pid;
+	char *const argv[8] = {"ftp", "-V", "-U", USER_AGENT, "-o", "-", data->uri, NULL};
+	int BUFF_SIZE = 500;
+	char buff[BUFF_SIZE];
+	size_t bytes_read;
+	long ret = 200;
+
+	if (!data || !data->uri) {
+		log_warnx("missing url");
+		return -1;
+	}
+	if (data->hash && strlen(data->hash) != SHA256_DIGEST_LENGTH*2) {
+		log_warnx("invalid hash");
+		return -1;
+	}
+	if (data->hash)
+		SHA256_Init(&data->ctx);
+
+	if (pipe(fds) != 0)
+		fatal("pipe");
+	if ((pid = fork()) == 0) {
+		close(fds[0]);
+		dup2(fds[1], STDOUT_FILENO);
+		close(fds[1]);
+		execvp(argv[0], argv);
+		exit(-1);
+	}
+	close(fds[1]);
+	while ((bytes_read = read(fds[0], buff, BUFF_SIZE)) > 0) {
+		if (write_callback(buff, 1, bytes_read, data) != bytes_read) {
+			ret = -1;
+		}
+	}
+	if (bytes_read < 0)
+		fatal("read");
+	close(fds[0]);
+	if (data->hash) {
+		SHA256_Final(obuff, &data->ctx);
+		if (ret == 200 && hash_check(obuff, data->hash) == -1)
+			ret = -1;
+	}
+	return ret;
+}
