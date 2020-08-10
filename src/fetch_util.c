@@ -20,7 +20,6 @@
 #include <ctype.h>
 #include <time.h>
 #include <unistd.h>
-#include <curl/curl.h>
 
 #include "fetch_util.h"
 #include "log.h"
@@ -91,13 +90,6 @@ write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 	return nmemb;
 }
 
-/* if we cant set curl options we are not going to be able to do much */
-static void
-xcurl_easy_setopt(CURL *handle, CURLoption option, void *parameter) {
-	if (curl_easy_setopt(handle, option, parameter) != CURLE_OK)
-		fatalx("failed to set curl option");
-}
-
 static int
 hash_check(unsigned char *obuff, const char *hash) {
 	int n;
@@ -115,6 +107,15 @@ hash_check(unsigned char *obuff, const char *hash) {
 		return -1;
 	}
 	return 0;
+}
+
+#ifdef RRDP_CURL
+#include <curl/curl.h>
+/* if we cant set curl options we are not going to be able to do much */
+static void
+xcurl_easy_setopt(CURL *handle, CURLoption option, void *parameter) {
+	if (curl_easy_setopt(handle, option, parameter) != CURLE_OK)
+		fatalx("failed to set curl option");
 }
 
 long
@@ -204,13 +205,14 @@ fetch_xml_uri(struct xmldata *data)
 
 	return response_code;
 }
-
+#else /* RRDP_CURL */
 long
-ftp_fetch_xml(struct xmldata *data) {
+fetch_xml_uri(struct xmldata *data) {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	int fds[2];
 	int pid;
-	char *const argv[8] = {"ftp", "-V", "-U", USER_AGENT, "-o", "-", data->uri, NULL};
+	char *const argv[8] = {"ftp", "-V", "-U", USER_AGENT,
+		"-o", "-", data->uri, NULL};
 	int BUFF_SIZE = 500;
 	char buff[BUFF_SIZE];
 	size_t bytes_read;
@@ -230,11 +232,14 @@ ftp_fetch_xml(struct xmldata *data) {
 	if (pipe(fds) != 0)
 		fatal("pipe");
 	if ((pid = fork()) == 0) {
+		if (pledge("stdio exec", NULL) == -1)
+			err(1, "pledge");
 		close(fds[0]);
-		dup2(fds[1], STDOUT_FILENO);
+		if (dup2(fds[1], STDOUT_FILENO) == -1)
+			fatal("dup2");
 		close(fds[1]);
 		execvp(argv[0], argv);
-		exit(-1);
+		fatal("%s: execvp", argv[0]);
 	}
 	close(fds[1]);
 	while ((bytes_read = read(fds[0], buff, BUFF_SIZE)) > 0) {
@@ -252,3 +257,4 @@ ftp_fetch_xml(struct xmldata *data) {
 	}
 	return ret;
 }
+#endif /* RRDP_CURL */

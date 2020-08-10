@@ -44,7 +44,6 @@ struct xmldata {
 };
 
 long fetch_xml_uri(struct xmldata *);
-long ftp_fetch_xml(struct xmldata *);
 
 #endif
 
