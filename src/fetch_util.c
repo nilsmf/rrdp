@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #include "fetch_util.h"
 #include "log.h"
@@ -210,8 +211,8 @@ long
 fetch_xml_uri(struct xmldata *data) {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	int fds[2];
-	int pid;
-	char *const argv[8] = {"ftp", "-V", "-U", USER_AGENT,
+	int pid, status;
+	char *const argv[8] = {data->opts->ftp_prog, "-V", "-U", USER_AGENT,
 		"-o", "-", data->uri, NULL};
 	int BUFF_SIZE = 500;
 	char buff[BUFF_SIZE];
@@ -232,8 +233,9 @@ fetch_xml_uri(struct xmldata *data) {
 	if (pipe(fds) != 0)
 		fatal("pipe");
 	if ((pid = fork()) == 0) {
-		if (pledge("stdio exec", NULL) == -1)
-			err(1, "pledge");
+		if (unveil(argv[0], "x") == -1)
+			fatal("ftp: unveil");
+		/* pledge execpromises "stdio exec" */
 		close(fds[0]);
 		if (dup2(fds[1], STDOUT_FILENO) == -1)
 			fatal("dup2");
@@ -245,11 +247,16 @@ fetch_xml_uri(struct xmldata *data) {
 	while ((bytes_read = read(fds[0], buff, BUFF_SIZE)) > 0) {
 		if (write_callback(buff, 1, bytes_read, data) != bytes_read) {
 			ret = -1;
+			break;
 		}
 	}
 	if (bytes_read < 0)
 		fatal("read");
 	close(fds[0]);
+	if (waitpid(pid, &status, 0) == -1 || status != 0) {
+		warn("%s failed with %d", argv[0], status);
+		return -1;
+	}
 	if (data->hash) {
 		SHA256_Final(obuff, &data->ctx);
 		if (ret == 200 && hash_check(obuff, data->hash) == -1)

@@ -287,6 +287,8 @@ make_workdir(const char *basedir, struct opts *opts)
 	if (mkdtemp(tmpl) == NULL)
 		err(1, "mkdtemp");
 	opts->basedir_working = tmpl;
+	if (unveil(tmpl, "crw") == -1)
+		fatal("%s: unveil", tmpl);
 	opts->working_dir = open(opts->basedir_working, O_RDONLY|O_DIRECTORY);
 	if (opts->working_dir < 0)
 		err(1, "open");

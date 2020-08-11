@@ -23,6 +23,7 @@
 struct opts {
 	char *basedir_primary;
 	char *basedir_working;
+	char *ftp_prog;
 	int primary_dir;
 	int working_dir;
 	int delta_limit;

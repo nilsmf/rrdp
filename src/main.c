@@ -192,11 +192,17 @@ main(int argc, char **argv)
 	int opt;
 	struct xmldata *xml_data;
 	opts.delta_limit = 0;
+	opts.ftp_prog = "/usr/bin/ftp";
 
-	while ((opt = getopt(argc, argv, "d:l:")) != -1) {
+	if (pledge("stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
+		fatal("pledge");
+	while ((opt = getopt(argc, argv, "d:f:l:")) != -1) {
 		switch (opt) {
 		case 'd':
 			cachedir = optarg;
+			break;
+		case 'f':
+			opts.ftp_prog = optarg;
 			break;
 		case 'l':
 			opts.delta_limit = (int)strtol(optarg, NULL, BASE10);
@@ -219,7 +225,8 @@ main(int argc, char **argv)
 		usage();
 
 	if (cachedir == NULL)
-		basedir = generate_basepath_from_uri(uri, "/tmp/rrdp", "https://");
+		basedir = generate_basepath_from_uri(uri, "/tmp/rrdp",
+		    "https://");
 	else
 		basedir = xstrdup(cachedir);
 	if (mkpath(basedir) != 0)
@@ -229,6 +236,9 @@ main(int argc, char **argv)
 	if (opts.primary_dir < 0)
 		fatal("failed to open dir: %s", basedir);
 	make_workdir(basedir, &opts);
+	if (unveil(basedir, "crw") == -1)
+		fatal("%s: unveil", basedir);
+
 	xml_data = fetch_notification_xml(uri, &opts);
 	process_notification_xml(xml_data, &opts);
 	free_xml_data(xml_data);
