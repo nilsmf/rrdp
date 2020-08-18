@@ -13,6 +13,38 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/*      $OpenBSD: fetch.c,v 1.197 2020/07/04 11:23:35 kn Exp $  */
+/*      $NetBSD: fetch.c,v 1.14 1997/08/18 10:20:20 lukem Exp $ */
+
+/*-
+ * Copyright (c) 1997 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason Thorpe and Luke Mewburn.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
 
 #include <stdio.h>
 #include <err.h>
@@ -26,6 +58,7 @@
 #include "log.h"
 
 #define USER_AGENT "rrdp-client v0.1"
+#define HTTP_USER_AGENT "rrdp-client v0.1"
 #define IF_MODIFIED_SINCE "If-Modified-Since"
 #define DATE "Date:"
 #define DATE_LEN 5
@@ -206,7 +239,7 @@ fetch_xml_uri(struct xmldata *data)
 
 	return response_code;
 }
-#else /* RRDP_CURL */
+#elif RRDP_FTP /* RRDP_CURL */
 long
 fetch_xml_uri(struct xmldata *data) {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
@@ -264,4 +297,1133 @@ fetch_xml_uri(struct xmldata *data) {
 	}
 	return ret;
 }
-#endif /* RRDP_CURL */
+#else /* RRDP_FTP */
+#include <stdlib.h>
+#include <tls.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <signal.h>
+#include <libgen.h>
+#include <unistd.h>
+#include <resolv.h>
+#include <err.h>
+#include <errno.h>
+#include <poll.h>
+#include <util.h>
+#include <vis.h>
+#include <setjmp.h>
+
+#define debug 1
+#define verbose 1
+
+#define	HTTP_URL	"http://"	/* http URL prefix */
+#define	HTTPS_URL	"https://"	/* https URL prefix */
+#define HTTPS_PORT	443
+#define HTTP_PORT	80
+#define HASHBYTES     1024
+
+#define EMPTYSTRING(x)	((x) == NULL || (*(x) == '\0'))
+
+char * const ssl_verify_opts[] = {
+#define SSL_CAFILE		0
+	"cafile",
+#define SSL_CAPATH		1
+	"capath",
+#define SSL_CIPHERS		2
+	"ciphers",
+#define SSL_DONTVERIFY		3
+	"dont",
+#define SSL_DOVERIFY		4
+	"do",
+#define SSL_VERIFYDEPTH		5
+	"depth",
+#define SSL_MUSTSTAPLE		6
+	"muststaple",
+#define SSL_NOVERIFYTIME	7
+	"noverifytime",
+#define SSL_SESSION		8
+	"session",
+	NULL
+};
+
+struct tls_config *tls_config;
+int tls_session_fd = -1;
+char *httpsport = "443";
+char *httpport = "80";
+int redirect_loop;
+off_t filesize;
+off_t bytes;
+static int retried;
+static jmp_buf  httpabort;
+int mark = HASHBYTES;
+int hash;
+/* XXX NF constants to be checked */
+FILE  *ttyout = stderr;
+int family = PF_INET;
+int connect_timeout = 10;
+char *httpuseragent = "User-Agent: " USER_AGENT;
+
+/*
+ * Set the SIGALRM interval timer for wait seconds, 0 to disable.
+ */
+static void
+alarmtimer(int wait)
+{
+	int save_errno = errno;
+	struct itimerval itv;
+
+	itv.it_value.tv_sec = wait;
+	itv.it_value.tv_usec = 0;
+	itv.it_interval = itv.it_value;
+	setitimer(ITIMER_REAL, &itv, NULL);
+	errno = save_errno;
+}
+
+/*
+ * Abort a http retrieval
+ */
+/* ARGSUSED */
+static void
+aborthttp(int signo)
+{
+	const char errmsg[] = "\nfetch aborted.\n";
+
+	alarmtimer(0);
+	write(fileno(ttyout), errmsg, sizeof(errmsg) - 1);
+	longjmp(httpabort, 1);
+}
+
+static char *
+ftp_readline(FILE *fp, size_t *lenp)
+{
+	return fparseln(fp, lenp, NULL, "\0\0\0", 0);
+}
+
+static void
+ftp_close(FILE **fin, struct tls **tls, int *fd)
+{
+	int	ret;
+
+	if (*tls != NULL) {
+		if (tls_session_fd != -1)
+			dprintf(STDERR_FILENO, "tls session resumed: %s\n",
+			    tls_conn_session_resumed(*tls) ? "yes" : "no");
+		do {
+			ret = tls_close(*tls);
+		} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
+		tls_free(*tls);
+		*tls = NULL;
+	}
+	if (*fd != -1) {
+		close(*fd);
+		*fd = -1;
+	}
+	if (*fin != NULL) {
+		fclose(*fin);
+		*fin = NULL;
+	}
+}
+
+static const char *
+sockerror(struct tls *tls)
+{
+	int	save_errno = errno;
+	if (tls != NULL) {
+		const char *tlserr = tls_error(tls);
+		if (tlserr != NULL)
+			return tlserr;
+	}
+	return strerror(save_errno);
+}
+
+/* ARGSUSED */
+static void
+tooslow(int signo)
+{
+	dprintf(STDERR_FILENO, "%s: connect taking too long\n", "rrdp");
+	_exit(2);
+}
+
+/*
+ * Wait for an asynchronous connect(2) attempt to finish.
+ */
+static int
+connect_wait(int s)
+{
+	struct pollfd pfd[1];
+	int error = 0;
+	socklen_t len = sizeof(error);
+
+	pfd[0].fd = s;
+	pfd[0].events = POLLOUT;
+
+	if (poll(pfd, 1, -1) == -1)
+		return -1;
+	if (getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &len) == -1)
+		return -1;
+	if (error != 0) {
+		errno = error;
+		return -1;
+	}
+	return 0;
+}
+
+static char
+hextochar(const char *str)
+{
+	unsigned char c, ret;
+
+	c = str[0];
+	ret = c;
+	if (isalpha(c))
+		ret -= isupper(c) ? 'A' - 10 : 'a' - 10;
+	else
+		ret -= '0';
+	ret *= 16;
+
+	c = str[1];
+	ret += c;
+	if (isalpha(c))
+		ret -= isupper(c) ? 'A' - 10 : 'a' - 10;
+	else
+		ret -= '0';
+	return ret;
+}
+
+/*
+ * Determine whether the character needs encoding, per RFC1738:
+ *	- No corresponding graphic US-ASCII.
+ *	- Unsafe characters.
+ */
+static int
+unsafe_char(const char *c0)
+{
+	const char *unsafe_chars = " <>\"#{}|\\^~[]`";
+	const unsigned char *c = (const unsigned char *)c0;
+
+	/*
+	 * No corresponding graphic US-ASCII.
+	 * Control characters and octets not used in US-ASCII.
+	 */
+	return (iscntrl(*c) || !isascii(*c) ||
+
+	    /*
+	     * Unsafe characters.
+	     * '%' is also unsafe, if is not followed by two
+	     * hexadecimal digits.
+	     */
+	    strchr(unsafe_chars, *c) != NULL ||
+	    (*c == '%' && (!isxdigit(*++c) || !isxdigit(*++c))));
+}
+
+static char *
+urldecode(const char *str)
+{
+	char *ret, c;
+	int i, reallen;
+
+	if (str == NULL)
+		return NULL;
+	if ((ret = malloc(strlen(str)+1)) == NULL)
+		err(1, "Can't allocate memory for URL decoding");
+	for (i = 0, reallen = 0; str[i] != '\0'; i++, reallen++, ret++) {
+		c = str[i];
+		if (c == '+') {
+			*ret = ' ';
+			continue;
+		}
+
+		/* Cannot use strtol here because next char
+		 * after %xx may be a digit.
+		 */
+		if (c == '%' && isxdigit((unsigned char)str[i+1]) &&
+		    isxdigit((unsigned char)str[i+2])) {
+			*ret = hextochar(&str[i+1]);
+			i+=2;
+			continue;
+		}
+		*ret = c;
+	}
+	*ret = '\0';
+
+	return ret-reallen;
+}
+
+/*
+ * Encode given URL, per RFC1738.
+ * Allocate and return string to the caller.
+ */
+static char *
+url_encode(const char *path)
+{
+	size_t i, length, new_length;
+	char *epath, *epathp;
+
+	length = new_length = strlen(path);
+
+	/*
+	 * First pass:
+	 * Count unsafe characters, and determine length of the
+	 * final URL.
+	 */
+	for (i = 0; i < length; i++)
+		if (unsafe_char(path + i))
+			new_length += 2;
+
+	epath = epathp = malloc(new_length + 1);	/* One more for '\0'. */
+	if (epath == NULL)
+		err(1, "Can't allocate memory for URL encoding");
+
+	/*
+	 * Second pass:
+	 * Encode, and copy final URL.
+	 */
+	for (i = 0; i < length; i++)
+		if (unsafe_char(path + i)) {
+			snprintf(epathp, 4, "%%" "%02x",
+			    (unsigned char)path[i]);
+			epathp += 3;
+		} else
+			*(epathp++) = path[i];
+
+	*epathp = '\0';
+	return (epath);
+}
+
+static char *
+recode_credentials(const char *userinfo)
+{
+	char *ui, *creds;
+	size_t ulen, credsize;
+
+	/* url-decode the user and pass */
+	ui = urldecode(userinfo);
+
+	ulen = strlen(ui);
+	credsize = (ulen + 2) / 3 * 4 + 1;
+	creds = malloc(credsize);
+	if (creds == NULL)
+		errx(1, "out of memory");
+	if (b64_ntop(ui, ulen, creds, credsize) == -1)
+		errx(1, "error in base64 encoding");
+	free(ui);
+	return (creds);
+}
+
+static void
+process_ssl_options(char *cp)
+{
+	const char *errstr;
+	long long depth;
+	char *str;
+
+	while (*cp) {
+		switch (getsubopt(&cp, ssl_verify_opts, &str)) {
+		case SSL_CAFILE:
+			if (str == NULL)
+				errx(1, "missing CA file");
+			if (tls_config_set_ca_file(tls_config, str) != 0)
+				errx(1, "tls ca file failed: %s",
+				    tls_config_error(tls_config));
+			break;
+		case SSL_CAPATH:
+			if (str == NULL)
+				errx(1, "missing CA directory path");
+			if (tls_config_set_ca_path(tls_config, str) != 0)
+				errx(1, "tls ca path failed: %s",
+				    tls_config_error(tls_config));
+			break;
+		case SSL_CIPHERS:
+			if (str == NULL)
+				errx(1, "missing cipher list");
+			if (tls_config_set_ciphers(tls_config, str) != 0)
+				errx(1, "tls ciphers failed: %s",
+				    tls_config_error(tls_config));
+			break;
+		case SSL_DONTVERIFY:
+			tls_config_insecure_noverifycert(tls_config);
+			tls_config_insecure_noverifyname(tls_config);
+			break;
+		case SSL_DOVERIFY:
+			tls_config_verify(tls_config);
+			break;
+		case SSL_VERIFYDEPTH:
+			if (str == NULL)
+				errx(1, "missing depth");
+			depth = strtonum(str, 0, INT_MAX, &errstr);
+			if (errstr)
+				errx(1, "certificate validation depth is %s",
+				    errstr);
+			tls_config_set_verify_depth(tls_config, (int)depth);
+			break;
+		case SSL_MUSTSTAPLE:
+			tls_config_ocsp_require_stapling(tls_config);
+			break;
+		case SSL_NOVERIFYTIME:
+			tls_config_insecure_noverifytime(tls_config);
+			break;
+		case SSL_SESSION:
+			if (str == NULL)
+				errx(1, "missing session file");
+			if ((tls_session_fd = open(str, O_RDWR|O_CREAT,
+			    0600)) == -1)
+				err(1, "failed to open or create session file "
+				    "'%s'", str);
+			if (tls_config_set_session_fd(tls_config,
+			    tls_session_fd) == -1)
+				errx(1, "failed to set session: %s",
+				    tls_config_error(tls_config));
+			break;
+		default:
+			errx(1, "unknown -S suboption `%s'",
+			    suboptarg ? suboptarg : "");
+			/* NOTREACHED */
+		}
+	}
+}
+
+static int
+stdio_tls_write_wrapper(void *arg, const char *buf, int len)
+{
+	struct tls *tls = arg;
+	ssize_t ret;
+
+	do {
+		ret = tls_write(tls, buf, len);
+	} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
+
+	return ret;
+}
+
+static int
+stdio_tls_read_wrapper(void *arg, char *buf, int len)
+{
+	struct tls *tls = arg;
+	ssize_t ret;
+
+	do {
+		ret = tls_read(tls, buf, len);
+	} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
+
+	return ret;
+}
+
+static int
+proxy_connect(int socket, char *host, char *cookie)
+{
+	int l;
+	char buf[1024];
+	char *connstr, *hosttail, *port;
+
+	if (*host == '[' && (hosttail = strrchr(host, ']')) != NULL &&
+		(hosttail[1] == '\0' || hosttail[1] == ':')) {
+		host++;
+		*hosttail++ = '\0';
+	} else
+		hosttail = host;
+
+	port = strrchr(hosttail, ':');		/* find portnum */
+	if (port != NULL)
+		*port++ = '\0';
+	if (!port)
+		port = "443";
+
+	if (cookie) {
+		l = asprintf(&connstr, "CONNECT %s:%s HTTP/1.1\r\n"
+			"Proxy-Authorization: Basic %s\r\n%s\r\n\r\n",
+			host, port, cookie, HTTP_USER_AGENT);
+	} else {
+		l = asprintf(&connstr, "CONNECT %s:%s HTTP/1.1\r\n%s\r\n\r\n",
+			host, port, HTTP_USER_AGENT);
+	}
+
+	if (l == -1)
+		errx(1, "Could not allocate memory to assemble connect"
+		     "string!");
+	if (debug)
+		printf("%s", connstr);
+	if (write(socket, connstr, l) != l)
+		err(1, "Could not send connect string");
+	read(socket, &buf, sizeof(buf)); /* only proxy header XXX: error
+	    handling? */
+	free(connstr);
+	return(200);
+}
+
+static int
+save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen)
+{
+	char			*header, *end, *cp;
+	unsigned long		chunksize;
+	size_t			hlen, rlen, wlen;
+	ssize_t			written;
+	char			cr, lf;
+
+	for (;;) {
+		header = ftp_readline(fin, &hlen);
+		if (header == NULL)
+			break;
+		/* strip CRLF and any optional chunk extension */
+		header[strcspn(header, ";\r\n")] = '\0';
+		errno = 0;
+		chunksize = strtoul(header, &end, 16);
+		if (errno || header[0] == '\0' || *end != '\0' ||
+		    chunksize > INT_MAX) {
+			warnx("Invalid chunk size '%s'", header);
+			free(header);
+			return -1;
+		}
+		free(header);
+
+		if (chunksize == 0) {
+			/* We're done.  Ignore optional trailer. */
+			return 0;
+		}
+
+		for (written = 0; chunksize != 0; chunksize -= rlen) {
+			rlen = (chunksize < buflen) ? chunksize : buflen;
+			rlen = fread(buf, 1, rlen, fin);
+			if (rlen == 0)
+				break;
+			bytes += rlen;
+			for (cp = buf, wlen = rlen; wlen > 0;
+			    wlen -= written, cp += written) {
+				if ((written = write(out, cp, wlen)) == -1) {
+					warn("Writing output file");
+					return -1;
+				}
+			}
+		}
+
+		if (rlen == 0 ||
+		    fread(&cr, 1, 1, fin) != 1 ||
+		    fread(&lf, 1, 1, fin) != 1)
+			break;
+
+		if (cr != '\r' || lf != '\n') {
+			warnx("Invalid chunked encoding");
+			return -1;
+		}
+	}
+
+	if (ferror(fin))
+		warnx("Error while reading from socket: %s", sockerror(tls));
+	else
+		warnx("Invalid chunked encoding: short read");
+
+	return -1;
+}
+
+static int
+url_get(const char *origline, const char *proxyenv, const char *outfile, int
+	lastfile)
+{
+	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
+	char *hosttail, *cause = "unknown", *newline, *host, *port, *buf = NULL;
+	char *epath, *redirurl, *loctail, *h, *p, gerror[200];
+	int error, isredirect = 0, rval = -1;
+	int isunavail = 0, retryafter = -1;
+	struct addrinfo hints, *res0, *res;
+	const char *savefile;
+	char *proxyurl = NULL;
+	char *credentials = NULL, *proxy_credentials = NULL;
+	int fd = -1, out = -1;
+	volatile sig_t oldintr, oldinti;
+	FILE *fin = NULL;
+	off_t hashbytes;
+	const char *errstr;
+	ssize_t len, wlen;
+	char *proxyhost = NULL;
+	char *sslpath = NULL, *sslhost = NULL;
+	int ishttpsurl = 0;
+	char *full_host = NULL;
+	const char *scheme;
+	char *locbase;
+	struct tls *tls = NULL;
+	int status;
+	int save_errno;
+	const size_t buflen = 128 * 1024;
+	int chunked = 0;
+
+	newline = strdup(origline);
+	if (newline == NULL)
+		errx(1, "Can't allocate memory to parse URL");
+	if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) == 0) {
+		host = newline + sizeof(HTTPS_URL) - 1;
+		scheme = HTTPS_URL;
+	} else
+		errx(1, "%s: URL not permitted", newline);
+
+	path = strchr(host, '/');		/* Find path */
+
+	if (EMPTYSTRING(path)) {
+		if (outfile) {				/* No slash, but */
+			path = strchr(host,'\0');	/* we have outfile. */
+			goto noslash;
+		}
+		warnx("No `/' after host (use -o): %s", origline);
+		goto cleanup_url_get;
+	}
+	*path++ = '\0';
+	if (EMPTYSTRING(path) && !outfile) {
+		warnx("No filename after host (use -o): %s", origline);
+		goto cleanup_url_get;
+	}
+
+noslash:
+	if (outfile)
+		savefile = outfile;
+	else {
+		if (path[strlen(path) - 1] == '/')	/* Consider no file */
+			savefile = NULL;		/* after dir invalid. */
+		else
+			savefile = basename(path);
+	}
+
+	if (EMPTYSTRING(savefile)) {
+		warnx("No filename after directory (use -o): %s", origline);
+		goto cleanup_url_get;
+	}
+
+	if (proxyenv != NULL) {		/* use proxy */
+		sslpath = strdup(path);
+		sslhost = strdup(host);
+		if (! sslpath || ! sslhost)
+			errx(1, "Can't allocate memory for https path/host.");
+		proxyhost = strdup(host);
+		if (proxyhost == NULL)
+			errx(1, "Can't allocate memory for proxy host.");
+		proxyurl = strdup(proxyenv);
+		if (proxyurl == NULL)
+			errx(1, "Can't allocate memory for proxy URL.");
+		if (strncasecmp(proxyurl, HTTP_URL, sizeof(HTTP_URL) - 1) == 0)
+			host = proxyurl + sizeof(HTTP_URL) - 1;
+		else {
+			warnx("Malformed proxy URL: %s", proxyenv);
+			goto cleanup_url_get;
+		}
+		if (EMPTYSTRING(host)) {
+			warnx("Malformed proxy URL: %s", proxyenv);
+			goto cleanup_url_get;
+		}
+		if (*--path == '\0')
+			*path = '/';		/* add / back to real path */
+		path = strchr(host, '/');	/* remove trailing / on host */
+		if (!EMPTYSTRING(path))
+			*path++ = '\0';		/* i guess this ++ is useless */
+
+		path = strchr(host, '@');	/* look for credentials in proxy */
+		if (!EMPTYSTRING(path)) {
+			*path = '\0';
+			if (strchr(host, ':') == NULL) {
+				warnx("Malformed proxy URL: %s", proxyenv);
+				goto cleanup_url_get;
+			}
+			proxy_credentials = recode_credentials(host);
+			*path = '@'; /* restore @ in proxyurl */
+
+			/*
+			 * This removes the password from proxyurl,
+			 * filling with stars
+			 */
+			for (host = 1 + strchr(proxyurl + 5, ':');  *host != '@';
+			    host++)
+				*host = '*';
+
+			host = path + 1;
+		}
+
+		path = newline;
+	}
+
+	if (*host == '[' && (hosttail = strrchr(host, ']')) != NULL &&
+	    (hosttail[1] == '\0' || hosttail[1] == ':')) {
+		host++;
+		*hosttail++ = '\0';
+		if (asprintf(&full_host, "[%s]", host) == -1)
+			errx(1, "Cannot allocate memory for hostname");
+	} else
+		hosttail = host;
+
+	portnum = strrchr(hosttail, ':');		/* find portnum */
+	if (portnum != NULL)
+		*portnum++ = '\0';
+	port = portnum ? portnum : httpsport;
+
+	if (full_host == NULL)
+		if ((full_host = strdup(host)) == NULL)
+			errx(1, "Cannot allocate memory for hostname");
+	if (debug)
+		fprintf(ttyout, "host %s, port %s, path %s, "
+		    "save as %s, auth %s.\n", host, port, path,
+		    savefile, credentials ? credentials : "none");
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = family;
+	hints.ai_socktype = SOCK_STREAM;
+	error = getaddrinfo(host, port, &hints, &res0);
+	/*
+	 * XXXNF i think this whole thing is useless now... we'll always have
+	 * https port or do exactly the same ting again
+	 */
+	/*
+	 * If the services file is corrupt/missing, fall back
+	 * on our hard-coded defines.
+	 */
+	if (error == EAI_SERVICE && port == httpport) {
+		snprintf(pbuf, sizeof(pbuf), "%d", HTTP_PORT);
+		error = getaddrinfo(host, pbuf, &hints, &res0);
+	} else if (error == EAI_SERVICE && port == httpsport) {
+		snprintf(pbuf, sizeof(pbuf), "%d", HTTPS_PORT);
+		error = getaddrinfo(host, pbuf, &hints, &res0);
+	}
+	if (error) {
+		warnx("%s: %s", host, gai_strerror(error));
+		goto cleanup_url_get;
+	}
+
+	/* ensure consistent order of the output */
+	if (verbose)
+		setvbuf(ttyout, NULL, _IOLBF, 0);
+
+	fd = -1;
+	for (res = res0; res; res = res->ai_next) {
+		if (getnameinfo(res->ai_addr, res->ai_addrlen, hbuf,
+		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST) != 0)
+			strlcpy(hbuf, "(unknown)", sizeof(hbuf));
+		if (verbose)
+			fprintf(ttyout, "Trying %s...\n", hbuf);
+
+		fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+		if (fd == -1) {
+			cause = "socket";
+			continue;
+		}
+
+		if (connect_timeout) {
+			(void)signal(SIGALRM, tooslow);
+			alarmtimer(connect_timeout);
+		}
+
+		for (error = connect(fd, res->ai_addr, res->ai_addrlen);
+		    error != 0 && errno == EINTR; error = connect_wait(fd))
+			continue;
+		if (error != 0) {
+			save_errno = errno;
+			close(fd);
+			errno = save_errno;
+			fd = -1;
+			cause = "connect";
+			continue;
+		}
+
+		/* get port in numeric */
+		if (getnameinfo(res->ai_addr, res->ai_addrlen, NULL, 0,
+		    pbuf, sizeof(pbuf), NI_NUMERICSERV) == 0)
+			port = pbuf;
+		else
+			port = NULL;
+
+		if (proxyenv && sslhost)
+			proxy_connect(fd, sslhost, proxy_credentials);
+		break;
+	}
+	freeaddrinfo(res0);
+	if (fd < 0) {
+		warn("%s", cause);
+		goto cleanup_url_get;
+	}
+
+	ssize_t ret;
+	if (proxyenv && sslpath) {
+		ishttpsurl = 0;
+		proxyurl = NULL;
+		path = sslpath;
+	}
+	if (sslhost == NULL) {
+		sslhost = strdup(host);
+		if (sslhost == NULL)
+			errx(1, "Can't allocate memory for https host.");
+	}
+	if ((tls = tls_client()) == NULL) {
+		fprintf(ttyout, "failed to create SSL client\n");
+		goto cleanup_url_get;
+	}
+	if (tls_configure(tls, tls_config) != 0) {
+		fprintf(ttyout, "TLS configuration failure: %s\n",
+		    tls_error(tls));
+		goto cleanup_url_get;
+	}
+	if (tls_connect_socket(tls, fd, sslhost) != 0) {
+		fprintf(ttyout, "TLS connect failure: %s\n", tls_error(tls));
+		goto cleanup_url_get;
+	}
+	do {
+		ret = tls_handshake(tls);
+	} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
+	if (ret != 0) {
+		fprintf(ttyout, "TLS handshake failure: %s\n", tls_error(tls));
+		goto cleanup_url_get;
+	}
+	fin = funopen(tls, stdio_tls_read_wrapper,
+	    stdio_tls_write_wrapper, NULL, NULL);
+
+	if (lastfile) {
+		if (pledge("stdio rpath inet dns tty",  NULL) == -1)
+			err(1, "pledge");
+	}
+
+	if (connect_timeout) {
+		signal(SIGALRM, SIG_DFL);
+		alarmtimer(0);
+	}
+
+	/*
+	 * Construct and send the request. Proxy requests don't want leading /.
+	 */
+	epath = url_encode(path);
+	if (proxyurl) {
+		if (verbose) {
+			fprintf(ttyout, "Requesting %s (via %s)\n",
+			    origline, proxyurl);
+		}
+		/*
+		 * Host: directive must use the destination host address for
+		 * the original URI (path).
+		 */
+		fprintf(fin, "GET %s HTTP/1.1\r\n"
+		    "Connection: close\r\n"
+		    "Host: %s\r\n%s\r\n",
+		    epath, proxyhost, httpuseragent);
+		if (credentials)
+			fprintf(fin, "Authorization: Basic %s\r\n",
+			    credentials);
+		if (proxy_credentials)
+			fprintf(fin, "Proxy-Authorization: Basic %s\r\n",
+			    proxy_credentials);
+		fprintf(fin, "\r\n");
+	} else {
+		if (verbose)
+			fprintf(ttyout, "Requesting %s\n", origline);
+		fprintf(fin,
+		    "GET /%s HTTP/1.1\r\n"
+		    "Connection: close\r\n"
+		    "Host: ", epath);
+		if (proxyhost) {
+			fprintf(fin, "%s", proxyhost);
+			port = NULL;
+		} else if (strchr(host, ':')) {
+			/*
+			 * strip off scoped address portion, since it's
+			 * local to node
+			 */
+			h = strdup(host);
+			if (h == NULL)
+				errx(1, "Can't allocate memory.");
+			if ((p = strchr(h, '%')) != NULL)
+				*p = '\0';
+			fprintf(fin, "[%s]", h);
+			free(h);
+		} else
+			fprintf(fin, "%s", host);
+
+		/*
+		 * Send port number only if it's specified and does not equal
+		 * 80. Some broken HTTP servers get confused if you explicitly
+		 * send them the port number.
+		 */
+		if (port && strcmp(port, "443") != 0)
+			fprintf(fin, ":%s", port);
+		fprintf(fin, "\r\n%s\r\n", httpuseragent);
+		if (credentials)
+			fprintf(fin, "Authorization: Basic %s\r\n",
+			    credentials);
+		fprintf(fin, "\r\n");
+	}
+	free(epath);
+
+	if (fflush(fin) == EOF) {
+		warnx("Writing HTTP request: %s", sockerror(tls));
+		goto cleanup_url_get;
+	}
+	if ((buf = ftp_readline(fin, &len)) == NULL) {
+		warnx("Receiving HTTP reply: %s", sockerror(tls));
+		goto cleanup_url_get;
+	}
+
+	while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+		buf[--len] = '\0';
+	if (debug)
+		fprintf(ttyout, "received '%s'\n", buf);
+
+	cp = strchr(buf, ' ');
+	if (cp == NULL)
+		goto improper;
+	else
+		cp++;
+
+	strlcpy(ststr, cp, sizeof(ststr));
+	status = strtonum(ststr, 200, 503, &errstr);
+	if (errstr) {
+		strnvis(gerror, cp, sizeof gerror, VIS_SAFE);
+		warnx("Error retrieving %s: %s", origline, gerror);
+		goto cleanup_url_get;
+	}
+
+	switch (status) {
+	case 200:	/* OK */
+		/* FALLTHROUGH */
+	case 206:	/* Partial Content */
+		break;
+	case 301:	/* Moved Permanently */
+	case 302:	/* Found */
+	case 303:	/* See Other */
+	case 307:	/* Temporary Redirect */
+		isredirect++;
+		if (redirect_loop++ > 10) {
+			warnx("Too many redirections requested");
+			goto cleanup_url_get;
+		}
+		break;
+	case 416:	/* Requested Range Not Satisfiable */
+		warnx("File is already fully retrieved.");
+		goto cleanup_url_get;
+	case 503:
+		isunavail = 1;
+		break;
+	default:
+		strnvis(gerror, cp, sizeof gerror, VIS_SAFE);
+		warnx("Error retrieving %s: %s", origline, gerror);
+		goto cleanup_url_get;
+	}
+
+	/*
+	 * Read the rest of the header.
+	 */
+	free(buf);
+	filesize = -1;
+
+	for (;;) {
+		if ((buf = ftp_readline(fin, &len)) == NULL) {
+			warnx("Receiving HTTP reply: %s", sockerror(tls));
+			goto cleanup_url_get;
+		}
+
+		while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+			buf[--len] = '\0';
+		if (len == 0)
+			break;
+		if (debug)
+			fprintf(ttyout, "received '%s'\n", buf);
+
+		/* Look for some headers */
+		cp = buf;
+#define CONTENTLEN "Content-Length: "
+		if (strncasecmp(cp, CONTENTLEN, sizeof(CONTENTLEN) - 1) == 0) {
+			size_t s;
+			cp += sizeof(CONTENTLEN) - 1;
+			if ((s = strcspn(cp, " \t")))
+				*(cp+s) = 0;
+			filesize = strtonum(cp, 0, LLONG_MAX, &errstr);
+			if (errstr != NULL)
+				goto improper;
+#define LOCATION "Location: "
+		} else if (isredirect &&
+		    strncasecmp(cp, LOCATION, sizeof(LOCATION) - 1) == 0) {
+			cp += sizeof(LOCATION) - 1;
+			/*
+			 * If there is a colon before the first slash, this URI
+			 * is not relative. RFC 3986 4.2
+			 */
+			if (cp[strcspn(cp, ":/")] != ':') {
+				errx(1, "Relative redirect not supported");
+				/* XXX doesn't handle protocol-relative URIs */
+				if (*cp == '/') {
+					locbase = NULL;
+					cp++;
+				} else {
+					locbase = strdup(path);
+					if (locbase == NULL)
+						errx(1, "Can't allocate memory"
+						    " for location base");
+					loctail = strchr(locbase, '#');
+					if (loctail != NULL)
+						*loctail = '\0';
+					loctail = strchr(locbase, '?');
+					if (loctail != NULL)
+						*loctail = '\0';
+					loctail = strrchr(locbase, '/');
+					if (loctail == NULL) {
+						free(locbase);
+						locbase = NULL;
+					} else
+						loctail[1] = '\0';
+				}
+				/* Contruct URL from relative redirect */
+				if (asprintf(&redirurl, "%s%s%s%s/%s%s",
+				    scheme, full_host,
+				    portnum ? ":" : "",
+				    portnum ? portnum : "",
+				    locbase ? locbase : "",
+				    cp) == -1)
+					errx(1, "Cannot build "
+					    "redirect URL");
+				free(locbase);
+			} else if ((redirurl = strdup(cp)) == NULL)
+				errx(1, "Cannot allocate memory for URL");
+			loctail = strchr(redirurl, '#');
+			if (loctail != NULL)
+				*loctail = '\0';
+			if (verbose)
+				fprintf(ttyout, "Redirected to %s\n", redirurl);
+			ftp_close(&fin, &tls, &fd);
+			rval = url_get(redirurl, proxyenv, savefile, lastfile);
+			free(redirurl);
+			goto cleanup_url_get;
+#define RETRYAFTER "Retry-After: "
+		} else if (isunavail &&
+		    strncasecmp(cp, RETRYAFTER, sizeof(RETRYAFTER) - 1) == 0) {
+			size_t s;
+			cp += sizeof(RETRYAFTER) - 1;
+			if ((s = strcspn(cp, " \t")))
+				cp[s] = '\0';
+			retryafter = strtonum(cp, 0, 0, &errstr);
+			if (errstr != NULL)
+				retryafter = -1;
+#define TRANSFER_ENCODING "Transfer-Encoding: "
+		} else if (strncasecmp(cp, TRANSFER_ENCODING,
+			    sizeof(TRANSFER_ENCODING) - 1) == 0) {
+			cp += sizeof(TRANSFER_ENCODING) - 1;
+			cp[strcspn(cp, " \t")] = '\0';
+			if (strcasecmp(cp, "chunked") == 0)
+				chunked = 1;
+		}
+		free(buf);
+	}
+
+	/* Content-Length should be ignored for Transfer-Encoding: chunked */
+	if (chunked)
+		filesize = -1;
+
+	if (isunavail) {
+		if (retried || retryafter != 0)
+			warnx("Error retrieving %s: 503 Service Unavailable",
+			    origline);
+		else {
+			if (verbose)
+				fprintf(ttyout, "Retrying %s\n", origline);
+			retried = 1;
+			ftp_close(&fin, &tls, &fd);
+			rval = url_get(origline, proxyenv, savefile, lastfile);
+		}
+		goto cleanup_url_get;
+	}
+
+	/* Open the output file.  */
+	out = fileno(stdout);
+
+	free(buf);
+	if ((buf = malloc(buflen)) == NULL)
+		errx(1, "Can't allocate memory for transfer buffer");
+
+	/* Trap signals */
+	oldintr = NULL;
+	oldinti = NULL;
+	if (setjmp(httpabort)) {
+		if (oldintr)
+			(void)signal(SIGINT, oldintr);
+		if (oldinti)
+			(void)signal(SIGINFO, oldinti);
+		goto cleanup_url_get;
+	}
+	oldintr = signal(SIGINT, aborthttp);
+
+	bytes = 0;
+	hashbytes = mark;
+
+	/* Finally, suck down the file. */
+	if (chunked) {
+		error = save_chunked(fin, tls, out, buf, buflen);
+		signal(SIGINT, oldintr);
+		signal(SIGINFO, oldinti);
+		if (error == -1)
+			goto cleanup_url_get;
+	} else {
+		while ((len = fread(buf, 1, buflen, fin)) > 0) {
+			bytes += len;
+			for (cp = buf; len > 0; len -= wlen, cp += wlen) {
+				if ((wlen = write(out, cp, len)) == -1) {
+					warn("Writing %s", savefile);
+					signal(SIGINT, oldintr);
+					signal(SIGINFO, oldinti);
+					goto cleanup_url_get;
+				}
+			}
+			if (hash) {
+				while (bytes >= hashbytes) {
+					(void)putc('#', ttyout);
+					hashbytes += mark;
+				}
+				(void)fflush(ttyout);
+			}
+		}
+		save_errno = errno;
+		signal(SIGINT, oldintr);
+		signal(SIGINFO, oldinti);
+		if (hash && bytes > 0) {
+			if (bytes < mark)
+				(void)putc('#', ttyout);
+			(void)putc('\n', ttyout);
+			(void)fflush(ttyout);
+		}
+		if (len == 0 && ferror(fin)) {
+			errno = save_errno;
+			warnx("Reading from socket: %s", sockerror(tls));
+			goto cleanup_url_get;
+		}
+	}
+	if (
+		filesize != -1 && len == 0 && bytes != filesize) {
+		if (verbose)
+			fputs("Read short file.\n", ttyout);
+		goto cleanup_url_get;
+	}
+
+	rval = 0;
+	goto cleanup_url_get;
+
+improper:
+	warnx("Improper response from %s", host);
+
+cleanup_url_get:
+	free(full_host);
+	free(sslhost);
+	ftp_close(&fin, &tls, &fd);
+	if (out >= 0 && out != fileno(stdout))
+		close(out);
+	free(buf);
+	free(proxyhost);
+	free(proxyurl);
+	free(newline);
+	free(credentials);
+	free(proxy_credentials);
+	return (rval);
+}
+
+long
+fetch_xml_uri(struct xmldata *data) {
+	unsigned char obuff[SHA256_DIGEST_LENGTH];
+	int fds[2];
+	int pid, status;
+	char *const argv[8] = {data->opts->ftp_prog, "-V", "-U", USER_AGENT,
+		"-o", "-", data->uri, NULL};
+	int BUFF_SIZE = 500;
+	char buff[BUFF_SIZE];
+	size_t bytes_read;
+	long ret = 200;
+
+	return url_get(data->uri, NULL, "-", 1);
+}
+
+#endif /* RRDP_FTP */

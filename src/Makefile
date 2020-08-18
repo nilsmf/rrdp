@@ -5,7 +5,7 @@ PROG=	rrdp
 SRCS=	delta.c fetch_util.c file_util.c log.c main.c notification.c \
 	snapshot.c util.c
 
-LDADD+= -lcrypto -lexpat
+LDADD+= -lcrypto -lexpat -ltls -lutil
 #LDADD+= -L/usr/local/lib -lcurl
 DPADD+= ${LIBCRYPTO} ${LIBEXPAT}
 
