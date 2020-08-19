@@ -314,8 +314,8 @@ fetch_xml_uri(struct xmldata *data) {
 #include <vis.h>
 #include <setjmp.h>
 
-#define debug 1
-#define verbose 1
+#define debug 0
+#define verbose 0
 
 #define	HTTP_URL	"http://"	/* http URL prefix */
 #define	HTTPS_URL	"https://"	/* https URL prefix */
@@ -347,22 +347,15 @@ char * const ssl_verify_opts[] = {
 	NULL
 };
 
-struct tls_config *tls_config;
-int tls_session_fd = -1;
-char *httpsport = "443";
-char *httpport = "80";
-int redirect_loop;
-off_t filesize;
-off_t bytes;
-static int retried;
-static jmp_buf  httpabort;
-int mark = HASHBYTES;
-int hash;
 /* XXX NF constants to be checked */
+off_t bytes;
+static jmp_buf  httpabort;
+int tls_session_fd = -1;
 FILE  *ttyout = stderr;
-int family = PF_INET;
+struct tls_config *tls_config;
 int connect_timeout = 10;
-char *httpuseragent = "User-Agent: " USER_AGENT;
+int redirect_loop;
+static int retried;
 
 /*
  * Set the SIGALRM interval timer for wait seconds, 0 to disable.
@@ -611,78 +604,6 @@ recode_credentials(const char *userinfo)
 	return (creds);
 }
 
-static void
-process_ssl_options(char *cp)
-{
-	const char *errstr;
-	long long depth;
-	char *str;
-
-	while (*cp) {
-		switch (getsubopt(&cp, ssl_verify_opts, &str)) {
-		case SSL_CAFILE:
-			if (str == NULL)
-				errx(1, "missing CA file");
-			if (tls_config_set_ca_file(tls_config, str) != 0)
-				errx(1, "tls ca file failed: %s",
-				    tls_config_error(tls_config));
-			break;
-		case SSL_CAPATH:
-			if (str == NULL)
-				errx(1, "missing CA directory path");
-			if (tls_config_set_ca_path(tls_config, str) != 0)
-				errx(1, "tls ca path failed: %s",
-				    tls_config_error(tls_config));
-			break;
-		case SSL_CIPHERS:
-			if (str == NULL)
-				errx(1, "missing cipher list");
-			if (tls_config_set_ciphers(tls_config, str) != 0)
-				errx(1, "tls ciphers failed: %s",
-				    tls_config_error(tls_config));
-			break;
-		case SSL_DONTVERIFY:
-			tls_config_insecure_noverifycert(tls_config);
-			tls_config_insecure_noverifyname(tls_config);
-			break;
-		case SSL_DOVERIFY:
-			tls_config_verify(tls_config);
-			break;
-		case SSL_VERIFYDEPTH:
-			if (str == NULL)
-				errx(1, "missing depth");
-			depth = strtonum(str, 0, INT_MAX, &errstr);
-			if (errstr)
-				errx(1, "certificate validation depth is %s",
-				    errstr);
-			tls_config_set_verify_depth(tls_config, (int)depth);
-			break;
-		case SSL_MUSTSTAPLE:
-			tls_config_ocsp_require_stapling(tls_config);
-			break;
-		case SSL_NOVERIFYTIME:
-			tls_config_insecure_noverifytime(tls_config);
-			break;
-		case SSL_SESSION:
-			if (str == NULL)
-				errx(1, "missing session file");
-			if ((tls_session_fd = open(str, O_RDWR|O_CREAT,
-			    0600)) == -1)
-				err(1, "failed to open or create session file "
-				    "'%s'", str);
-			if (tls_config_set_session_fd(tls_config,
-			    tls_session_fd) == -1)
-				errx(1, "failed to set session: %s",
-				    tls_config_error(tls_config));
-			break;
-		default:
-			errx(1, "unknown -S suboption `%s'",
-			    suboptarg ? suboptarg : "");
-			/* NOTREACHED */
-		}
-	}
-}
-
 static int
 stdio_tls_write_wrapper(void *arg, const char *buf, int len)
 {
@@ -817,7 +738,7 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen)
 
 static int
 url_get(const char *origline, const char *proxyenv, const char *outfile, int
-	lastfile)
+	lastfile, struct xmldata *data)
 {
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
 	char *hosttail, *cause = "unknown", *newline, *host, *port, *buf = NULL;
@@ -833,7 +754,7 @@ url_get(const char *origline, const char *proxyenv, const char *outfile, int
 	FILE *fin = NULL;
 	off_t hashbytes;
 	const char *errstr;
-	ssize_t len, wlen;
+	ssize_t len;
 	char *proxyhost = NULL;
 	char *sslpath = NULL, *sslhost = NULL;
 	int ishttpsurl = 0;
@@ -845,6 +766,15 @@ url_get(const char *origline, const char *proxyenv, const char *outfile, int
 	int save_errno;
 	const size_t buflen = 128 * 1024;
 	int chunked = 0;
+
+	char *httpsport = "443";
+	char *httpport = "80";
+	off_t filesize;
+	int mark = HASHBYTES;
+	int hash;
+	int family = PF_UNSPEC;
+	char *httpuseragent = "User-Agent: " USER_AGENT;
+
 
 	newline = strdup(origline);
 	if (newline == NULL)
@@ -1069,11 +999,6 @@ noslash:
 	fin = funopen(tls, stdio_tls_read_wrapper,
 	    stdio_tls_write_wrapper, NULL, NULL);
 
-	if (lastfile) {
-		if (pledge("stdio rpath inet dns tty",  NULL) == -1)
-			err(1, "pledge");
-	}
-
 	if (connect_timeout) {
 		signal(SIGALRM, SIG_DFL);
 		alarmtimer(0);
@@ -1278,7 +1203,7 @@ noslash:
 			if (verbose)
 				fprintf(ttyout, "Redirected to %s\n", redirurl);
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(redirurl, proxyenv, savefile, lastfile);
+			rval = url_get(redirurl, proxyenv, savefile, lastfile, data);
 			free(redirurl);
 			goto cleanup_url_get;
 #define RETRYAFTER "Retry-After: "
@@ -1315,7 +1240,7 @@ noslash:
 				fprintf(ttyout, "Retrying %s\n", origline);
 			retried = 1;
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(origline, proxyenv, savefile, lastfile);
+			rval = url_get(origline, proxyenv, savefile, lastfile, data);
 		}
 		goto cleanup_url_get;
 	}
@@ -1352,20 +1277,24 @@ noslash:
 	} else {
 		while ((len = fread(buf, 1, buflen, fin)) > 0) {
 			bytes += len;
-			for (cp = buf; len > 0; len -= wlen, cp += wlen) {
+		/*	for (cp = buf; len > 0; len -= wlen, cp += wlen) {
 				if ((wlen = write(out, cp, len)) == -1) {
 					warn("Writing %s", savefile);
 					signal(SIGINT, oldintr);
 					signal(SIGINFO, oldinti);
 					goto cleanup_url_get;
 				}
-			}
+			} */
 			if (hash) {
 				while (bytes >= hashbytes) {
 					(void)putc('#', ttyout);
 					hashbytes += mark;
 				}
 				(void)fflush(ttyout);
+			}
+			if(write_callback(buf, 1, len, data) == 0) {
+				warnx("parse error");
+				goto cleanup_url_get;
 			}
 		}
 		save_errno = errno;
@@ -1414,16 +1343,22 @@ cleanup_url_get:
 long
 fetch_xml_uri(struct xmldata *data) {
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	int fds[2];
-	int pid, status;
-	char *const argv[8] = {data->opts->ftp_prog, "-V", "-U", USER_AGENT,
-		"-o", "-", data->uri, NULL};
-	int BUFF_SIZE = 500;
-	char buff[BUFF_SIZE];
-	size_t bytes_read;
 	long ret = 200;
 
-	return url_get(data->uri, NULL, "-", 1);
+	redirect_loop = 0;
+	retried = 0;
+	if (data->hash)
+		SHA256_Init(&data->ctx);
+	if ((ret = url_get(data->uri, NULL, "-", 1, data)) != 0)
+		warnx("url_get failed");
+	else
+		ret = 200;
+	if (data->hash) {
+		SHA256_Final(obuff, &data->ctx);
+		if (ret == 200 && hash_check(obuff, data->hash) == -1)
+			ret = -1;
+	}
+	return ret;
 }
 
 #endif /* RRDP_FTP */

@@ -185,7 +185,7 @@ main(int argc, char **argv)
 	opts.verbose = 0;
 	opts.ftp_prog = "/usr/bin/ftp";
 
-	if (pledge("stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
+	if (pledge("dns inet tty stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
 		fatal("pledge");
 	while ((opt = getopt(argc, argv, "d:f:il:v")) != -1) {
 		switch (opt) {
@@ -230,6 +230,8 @@ main(int argc, char **argv)
 	make_workdir(basedir, &opts);
 	if (unveil(basedir, "crw") == -1)
 		fatal("%s: unveil", basedir);
+	if (unveil("/etc/ssl/", "r") == -1)
+		fatal("%s: unveil", "/etc/ssl/");
 
 	xml_data = fetch_notification_xml(uri, &opts);
 	process_notification_xml(xml_data, &opts);
