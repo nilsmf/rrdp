@@ -23,9 +23,8 @@
 
 #include <expat.h>
 
-#include "notification.h"
 #include "log.h"
-#include "file_util.h"
+#include "rrdp.h"
 
 static int
 add_delta(struct notification_xml *nxml, const char *uri, const char *hash,

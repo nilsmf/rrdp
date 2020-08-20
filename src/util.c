@@ -30,9 +30,8 @@
 #include <libgen.h>
 #include <fcntl.h>
 
-#include "util.h"
 #include "log.h"
-#include "file_util.h"
+#include "rrdp.h"
 
 char *
 xstrdup(const char *s)

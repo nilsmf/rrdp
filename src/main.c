@@ -22,10 +22,7 @@
 #include <fcntl.h>
 
 #include "log.h"
-#include "notification.h"
-#include "snapshot.h"
-#include "delta.h"
-#include "file_util.h"
+#include "rrdp.h"
 
 /*
  * - deal with withdraws (either ignore or leave as is)

@@ -22,7 +22,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#include "fetch_util.h"
+#include "rrdp.h"
 #include "log.h"
 
 #define USER_AGENT "rrdp-client v0.1"

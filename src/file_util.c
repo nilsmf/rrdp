@@ -25,9 +25,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "file_util.h"
 #include "log.h"
-#include "util.h"
+#include "rrdp.h"
 
 int
 mkpath(const char *dir)

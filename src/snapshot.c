@@ -23,10 +23,8 @@
 
 #include <expat.h>
 
-#include "snapshot.h"
 #include "log.h"
-#include "file_util.h"
-#include "fetch_util.h"
+#include "rrdp.h"
 
 enum snapshot_scope {
 	SNAPSHOT_SCOPE_NONE,
