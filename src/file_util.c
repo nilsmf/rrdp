@@ -170,6 +170,13 @@ mv_delta(char *from, char *to)
 				free(newpath);
 				return 1;
 			}
+			if (unlink(newpath) == -1) {
+				if (errno != ENOENT) {
+					log_warnx("failed to delete %s", newpath);
+					free(newpath);
+					return 1;
+				}
+			}
 			/* XXXNF check and delete newpath file as well */
 		/* otherwise move the file to the new location */
 		} else {

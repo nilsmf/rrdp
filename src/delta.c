@@ -184,6 +184,8 @@ write_delta(struct xmldata *xml_data, int withdraw)
 	unsigned char *data_decoded;
 	int decoded_len;
 
+	if (withdraw && xml_data->opts->ignore_withdraw)
+		return;
 	f = open_working_uri_write(delta_xml->publish_uri, xml_data->opts);
 	if (f == NULL)
 		fatal("%s - file open fail", __func__);

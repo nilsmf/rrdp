@@ -27,6 +27,7 @@ struct opts {
 	int primary_dir;
 	int working_dir;
 	int delta_limit;
+	int ignore_withdraw;
 };
 
 int	b64_decode(char *, unsigned char **);

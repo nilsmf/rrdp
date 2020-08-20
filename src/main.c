@@ -28,12 +28,6 @@
 #include "file_util.h"
 
 /*
-
- * - check for memleaks (e.g. no call to XML_ParserFree())
- * - review use of err and bubble up most issues so deltas don't crash except on
- *   fatal mem/file issues
- * - add pledge calls
- * - handle network failures with retries
  * - deal with withdraws (either ignore or leave as is)
  * - dont allow basedirs outside our dirs (check for ..)
  */
@@ -178,7 +172,8 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: rrdp [-l delta_limit][-d cachedir] uri\n");
+	fprintf(stderr, "usage: rrdp [-l delta_limit][-d cachedir][-f ftp_bin]"
+	    "[-i] uri\n");
 	exit(1);
 }
 
@@ -192,17 +187,21 @@ main(int argc, char **argv)
 	int opt;
 	struct xmldata *xml_data;
 	opts.delta_limit = 0;
+	opts.ignore_withdraw = 0;
 	opts.ftp_prog = "/usr/bin/ftp";
 
 	if (pledge("stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
 		fatal("pledge");
-	while ((opt = getopt(argc, argv, "d:f:l:")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:il:")) != -1) {
 		switch (opt) {
 		case 'd':
 			cachedir = optarg;
 			break;
 		case 'f':
 			opts.ftp_prog = optarg;
+			break;
+		case 'i':
+			opts.ignore_withdraw = 1;
 			break;
 		case 'l':
 			opts.delta_limit = (int)strtol(optarg, NULL, BASE10);
