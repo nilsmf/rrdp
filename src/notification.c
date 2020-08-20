@@ -158,7 +158,7 @@ check_state(struct notification_xml *nxml)
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
-	log_info("Happy to apply %d deltas", serial_counter);
+	log_debuginfo("Happy to apply %d deltas", serial_counter);
 	/* All serials matched */
 	nxml->state = NOTIFICATION_STATE_DELTAS;
 }
@@ -166,17 +166,17 @@ check_state(struct notification_xml *nxml)
 void
 log_notification_xml(struct notification_xml *notification_xml)
 {
-	log_info("scope: %d", notification_xml->scope);
-	log_info("state: %d", notification_xml->state);
-	log_info("xmlns: %s", notification_xml->xmlns ?: "NULL");
-	log_info("version: %d", notification_xml->version);
-	log_info("current_session_id: %s",
+	log_debug("scope: %d", notification_xml->scope);
+	log_debug("state: %d", notification_xml->state);
+	log_debug("xmlns: %s", notification_xml->xmlns ?: "NULL");
+	log_debug("version: %d", notification_xml->version);
+	log_debug("current_session_id: %s",
 	    notification_xml->current_session_id ?: "NULL");
-	log_info("current_serial: %d", notification_xml->current_serial);
-	log_info("session_id: %s", notification_xml->session_id ?: "NULL");
-	log_info("serial: %d", notification_xml->serial);
-	log_info("snapshot_uri: %s", notification_xml->snapshot_uri ?: "NULL");
-	log_info("snapshot_hash: %s",
+	log_debug("current_serial: %d", notification_xml->current_serial);
+	log_debug("session_id: %s", notification_xml->session_id ?: "NULL");
+	log_debug("serial: %d", notification_xml->serial);
+	log_debug("snapshot_uri: %s", notification_xml->snapshot_uri ?: "NULL");
+	log_debug("snapshot_hash: %s",
 	    notification_xml->snapshot_hash ?: "NULL");
 }
 
@@ -319,7 +319,7 @@ start_delta_elem(struct xmldata *xml_data, const char **attr)
 		    delta_hash, delta_serial) == 0) {
 			PARSE_FAIL(p, "parse failed - adding delta failed");
 		}
-		log_info("adding delta %d %s", delta_serial, delta_uri);
+		log_debuginfo("adding delta %d %s", delta_serial, delta_uri);
 	}
 	notification_xml->scope = NOTIFICATION_SCOPE_DELTA;
 }
@@ -384,7 +384,7 @@ save_notification_data(struct xmldata *xml_data)
 	FILE *f = NULL;
 	struct notification_xml *nxml = xml_data->xml_data;
 
-	log_info("saving %s/%s", xml_data->opts->basedir_primary,
+	log_debuginfo("saving %s/%s", xml_data->opts->basedir_primary,
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME,
@@ -412,7 +412,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 	ssize_t s;
 	int l = 0;
 
-	log_info("investigating %s/%s", xml_data->opts->basedir_primary,
+	log_debuginfo("investigating %s/%s", xml_data->opts->basedir_primary,
 	    STATE_FILENAME);
 
 	fd = openat(xml_data->opts->primary_dir, STATE_FILENAME, O_RDONLY);
@@ -447,7 +447,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		}
 		l++;
 	}
-	log_info("current session: %s\ncurrent serial: %d\nmodified since: %s",
+	log_debug("current session: %s\ncurrent serial: %d\nmodified since: %s",
 	    nxml->current_session_id ?: "NULL", nxml->current_serial,
 	    xml_data->modified_since);
 	fclose(f);

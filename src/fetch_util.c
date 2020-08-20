@@ -145,7 +145,7 @@ fetch_xml_uri(struct xmldata *data)
 	if ((curl = curl_easy_init()) == NULL)
 		fatal("curl init failure");
 
-	log_info("starting curl: %s", data->uri);
+	log_debuginfo("starting curl: %s", data->uri);
 	if (data->hash)
 		SHA256_Init(&data->ctx);
 	/* abuse that we never use modified since if we have a hash */

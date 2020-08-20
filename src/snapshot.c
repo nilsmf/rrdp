@@ -48,11 +48,11 @@ struct snapshot_xml {
 static void
 log_snapshot_xml(struct snapshot_xml *snapshot_xml)
 {
-	log_info("scope: %d", snapshot_xml->scope);
-	log_info("xmlns: %s", snapshot_xml->xmlns ?: "NULL");
-	log_info("version: %d", snapshot_xml->version);
-	log_info("session_id: %s", snapshot_xml->session_id ?: "NULL");
-	log_info("serial: %d", snapshot_xml->serial);
+	log_debug("scope: %d", snapshot_xml->scope);
+	log_debug("xmlns: %s", snapshot_xml->xmlns ?: "NULL");
+	log_debug("version: %d", snapshot_xml->version);
+	log_debug("session_id: %s", snapshot_xml->session_id ?: "NULL");
+	log_debug("serial: %d", snapshot_xml->serial);
 }
 
 static void

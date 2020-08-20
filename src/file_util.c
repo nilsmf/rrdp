@@ -78,7 +78,7 @@ rm_dir(char *dir, int min_del_level)
 	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
 	if (!tree)
 		return 1;
-	log_info("deleting %s", dir);
+	log_debuginfo("deleting %s", dir);
 
 	while ((node = fts_read(tree))) {
 		/* clear "from" directories as leave them */
@@ -125,7 +125,7 @@ mv_delta(char *from, char *to)
 		log_warnx("failed to open tree");
 		return 1;
 	}
-	log_info("migrating %s -> %s", from, to);
+	log_debuginfo("migrating %s -> %s", from, to);
 
 	while ((node = fts_read(tree))) {
 		/* replace "from" with "to" */

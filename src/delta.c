@@ -50,11 +50,11 @@ struct delta_xml {
 static void
 log_delta_xml(struct delta_xml *delta_xml)
 {
-	log_info("scope: %d", delta_xml->scope);
-	log_info("xmlns: %s", delta_xml->xmlns ?: "NULL");
-	log_info("version: %d", delta_xml->version);
-	log_info("session_id: %s", delta_xml->session_id ?: "NULL");
-	log_info("serial: %d", delta_xml->serial);
+	log_debug("scope: %d", delta_xml->scope);
+	log_debug("xmlns: %s", delta_xml->xmlns ?: "NULL");
+	log_debug("version: %d", delta_xml->version);
+	log_debug("session_id: %s", delta_xml->session_id ?: "NULL");
+	log_debug("serial: %d", delta_xml->serial);
 }
 
 static void

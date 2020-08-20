@@ -66,7 +66,7 @@ fetch_notification_xml(char* uri, struct opts *opts)
 	if (!nxml)
 		fatalx("no notification_xml available");
 	if (res == 304) {
-		log_info("Got up to date return code from server");
+		log_debuginfo("Got up to date return code from server");
 		nxml->state = NOTIFICATION_STATE_NONE;
 	} else {
 		/* one last check in case empty values returned */
@@ -89,7 +89,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		fatalx("NOTIFICATION_STATE_ERROR");
 	case NOTIFICATION_STATE_NONE:
 		rm_working_dir(opts);
-		log_info("up to date");
+		log_debuginfo("up to date");
 		return;
 	case NOTIFICATION_STATE_DELTAS:
 		expected_deltas = nxml->serial - nxml->current_serial;
@@ -99,7 +99,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			/* XXXNF Hack to make this work */
 			xml_data->modified_since[0] = '\0';
 		}
-		log_info("fetching deltas");
+		log_debuginfo("fetching deltas");
 		while (!TAILQ_EMPTY(&(nxml->delta_q))) {
 			d = TAILQ_FIRST(&(nxml->delta_q));
 			TAILQ_REMOVE(&(nxml->delta_q), d, q);
@@ -129,7 +129,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		if (num_deltas == expected_deltas) {
 			if (mv_delta(opts->basedir_working,
 			    opts->basedir_primary) == 0) {
-				log_info("delta migrate passed");
+				log_debuginfo("delta migrate passed");
 				break;
 			} else
 				log_warnx("delta migration failed");
@@ -143,7 +143,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		make_workdir(opts->basedir_primary, opts);
 		/* FALLTHROUGH */
 	case NOTIFICATION_STATE_SNAPSHOT:
-		log_info("fetching snapshot");
+		log_debuginfo("fetching snapshot");
 		/* XXXCJ check that uri points to same host */
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
 		    nxml->snapshot_hash, opts, nxml) != 0) {
@@ -161,7 +161,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			rm_working_dir(opts);
 			fatal("failed to update");
 		}
-		log_info("snapshot move success");
+		log_debuginfo("snapshot move success");
 	}
 	save_notification_data(xml_data);
 }
@@ -208,7 +208,11 @@ main(int argc, char **argv)
 		}
 	}
 
+#ifdef DEBUG
 	log_init(1, LOG_USER);
+#else
+	log_init(0, LOG_USER);
+#endif
 	argv += optind;
 	argc -= optind;
 
