@@ -175,31 +175,6 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	return 1;
 }
 
-char *
-generate_basepath_from_uri(const char *uri, const char *base_path,
-    const char *proto)
-{
-	const char *host;
-	size_t hostsz;
-	char *filename;
-
-	if (!uri || !base_path) {
-		log_warnx("%s - missing data", __func__);
-		return NULL;
-	}
-	if (rsync_uri_parse(&host, &hostsz,
-			    NULL, NULL,
-			    NULL, NULL,
-			    NULL, uri, proto) == 0) {
-		return NULL;
-	}
-
-	if (asprintf(&filename, "%s/%.*s", base_path, (int)hostsz, host) == -1)
-		err(1, "asprintf");
-
-	return filename;
-}
-
 static const char *
 fetch_filename_from_uri(const char *uri, const char *proto)
 {

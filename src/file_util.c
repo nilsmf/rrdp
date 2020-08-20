@@ -29,41 +29,48 @@
 #include "rrdp.h"
 
 int
-mkpath(const char *dir)
-{
-	struct stat sb;
-
-	if (!dir) {
-		errno = EINVAL;
-		return 1;
-	}
-	if (!stat(dir, &sb))
-		return 0;
-
-	char *newdir;
-	mkpath(dirname(newdir = xstrdup(dir)));
-	int ret = mkdir(newdir, S_IRWXU);
-	free(newdir);
-	return ret;
-}
-
-int
 mkpath_at(int fd, const char *dir)
 {
 	struct stat sb;
+	char *path;
+	char *delim;
+	int len;
 
 	if (!dir) {
 		errno = EINVAL;
 		return 1;
 	}
-	if (!fstatat(fd, dir, &sb, 0))
-		return 0;
-
-	char *newdir;
-	mkpath_at(fd, dirname(newdir = xstrdup(dir)));
-	int ret = mkdirat(fd, newdir, S_IRWXU);
-	free(newdir);
-	return ret;
+	while (strlen(dir) > 0 && dir[0] == '/')
+		dir++;
+	path = xstrdup(dir);
+	delim = path;
+	for (;;) {
+		if (delim[0] == '\0')
+			break;
+		delim = strchr(delim, '/');
+		if (delim != NULL)
+			delim[0] = '\0';
+		if ((len = strlen(path)) >= 2 &&
+		    path[len - 1] == '.' && path[len - 2] == '.' &&
+		    (len == 2 || path[strlen(path) - 3] == '/')) {
+			warnx("Tried to use .. when making path");
+			free(path);
+			errno = EINVAL;
+			return 1;
+		}
+		if (len > 0 && fstatat(fd, path, &sb, 0) != 0) {
+			if (mkdirat(fd, path, S_IRWXU) != 0) {
+				free(path);
+				return 1;
+			}
+		}
+		if (delim == NULL)
+			break;
+		delim[0] = '/';
+		delim++;
+	}
+	free(path);
+	return 0;
 }
 
 int
@@ -108,12 +115,13 @@ rm_dir(char *dir, int min_del_level)
 
 /* XXXNF this also deletes the directory being copied */
 int
-mv_delta(char *from, char *to)
+mv_delta(char *from, char *to, int to_fd)
 {
 	FTSENT *node;
 	FTS *tree;
 	char *vals[] = {from, NULL};
 	char *newpath;
+	char *newpath_at;
 	int from_len;
 
 	if (!from || !to)
@@ -129,15 +137,14 @@ mv_delta(char *from, char *to)
 
 	while ((node = fts_read(tree))) {
 		/* replace "from" with "to" */
-		if (asprintf(&newpath, "%s%s", to, node->fts_path + from_len)
-		    == -1)
+		newpath_at = node->fts_path + from_len;
+		if (asprintf(&newpath, "%s%s", to, newpath_at) == -1)
 			err(1, "asprintf");
 
 		/* create dirs in "to" as we discover them */
 		if (node->fts_info & FTS_D) {
-			if (mkpath(newpath)) {
-				log_warnx("failed to create %s",
-				    node->fts_path);
+			if (mkpath_at(to_fd, newpath_at) != 0) {
+				log_warn("failed to create %s", newpath_at);
 				free(newpath);
 				return 1;
 			}
@@ -147,7 +154,7 @@ mv_delta(char *from, char *to)
 		/* clear "from" directories as leave them */
 		if (node->fts_info & FTS_DP) {
 			if (rmdir(node->fts_path)) {
-				log_warnx("failed to delete %s",
+				log_warn("failed to delete %s",
 				    node->fts_path);
 				free(newpath);
 				return 1;
@@ -164,14 +171,13 @@ mv_delta(char *from, char *to)
 		/* zero sized files are delta "withdraws" */
 		if (node->fts_statp->st_size == 0) {
 			if (unlink(node->fts_path)) {
-				log_warnx("failed to delete %s",
-				    node->fts_path);
+				log_warn("failed to delete %s", node->fts_path);
 				free(newpath);
 				return 1;
 			}
 			if (unlink(newpath) == -1) {
 				if (errno != ENOENT) {
-					log_warnx("failed to delete %s", newpath);
+					log_warn("failed to delete %s", newpath);
 					free(newpath);
 					return 1;
 				}
@@ -180,7 +186,7 @@ mv_delta(char *from, char *to)
 		/* otherwise move the file to the new location */
 		} else {
 			if (rename(node->fts_path, newpath)) {
-				log_warnx("failed to move %s to %s",
+				log_warn("failed to move %s to %s",
 				    node->fts_path, newpath);
 				free(newpath);
 				return 1;

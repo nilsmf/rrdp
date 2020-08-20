@@ -36,10 +36,9 @@ void	make_workdir(const char *, struct opts *);
 void	free_workdir(struct opts *);
 
 /* file_util */
-int mkpath(const char *);
 int mkpath_at(int, const char *);
 int rm_dir(char *, int);
-int mv_delta(char *, char *);
+int mv_delta(char *, char *, int);
 
 /* fetch_util */ 
 #define TIME_FORMAT "%a, %d %b %Y %T GMT"

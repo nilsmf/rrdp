@@ -20,14 +20,10 @@
 #include <syslog.h>
 #include <err.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include "log.h"
 #include "rrdp.h"
-
-/*
- * - deal with withdraws (either ignore or leave as is)
- * - dont allow basedirs outside our dirs (check for ..)
- */
 
 static int
 rm_working_dir(struct opts *opts)
@@ -128,7 +124,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		 */
 		if (num_deltas == expected_deltas) {
 			if (mv_delta(opts->basedir_working,
-			    opts->basedir_primary) == 0) {
+			    opts->basedir_primary, opts->primary_dir) == 0) {
 				log_debuginfo("delta migrate passed");
 				break;
 			} else
@@ -156,7 +152,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		 */
 		rm_primary_dir(opts);
 		if (mv_delta(opts->basedir_working,
-		    opts->basedir_primary) != 0) {
+		    opts->basedir_primary, opts->primary_dir) != 0) {
 			rm_primary_dir(opts);
 			rm_working_dir(opts);
 			fatal("failed to update");
@@ -169,8 +165,8 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: rrdp [-l delta_limit][-d cachedir][-f ftp_bin]"
-	    "[-i] uri\n");
+	fprintf(stderr, "usage: rrdp [-l delta_limit][-f ftp_bin]"
+	    "[-i] -d cachedir uri\n");
 	exit(1);
 }
 
@@ -181,6 +177,7 @@ main(int argc, char **argv)
 	char *cachedir = NULL;
 	char *uri = NULL;
 	char *basedir;
+	struct stat st;
 	int opt;
 	struct xmldata *xml_data;
 	opts.delta_limit = 0;
@@ -216,21 +213,16 @@ main(int argc, char **argv)
 	argv += optind;
 	argc -= optind;
 
-	/* XXX hack for now for quick testing */
-	if (argc == 0)
-		uri = "https://ca.rg.net/rrdp/notify.xml";
-	else if (argc == 1)
+	if (argc == 1)
 		uri = argv[0];
 	else
 		usage();
 
 	if (cachedir == NULL)
-		basedir = generate_basepath_from_uri(uri, "/tmp/rrdp",
-		    "https://");
-	else
-		basedir = xstrdup(cachedir);
-	if (mkpath(basedir) != 0)
-		fatal("failed to make basedir");
+		usage();
+	basedir = xstrdup(cachedir);
+	if (stat(basedir, &st) != 0)
+		fatal("cachedir missing");
 	opts.basedir_primary = basedir;
 	opts.primary_dir = open(opts.basedir_primary, O_RDONLY|O_DIRECTORY);
 	if (opts.primary_dir < 0)
