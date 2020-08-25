@@ -25,6 +25,8 @@
 #include "log.h"
 #include "rrdp.h"
 
+#define HTTP_PROXY      "http_proxy"
+
 static int
 rm_working_dir(struct opts *opts)
 {
@@ -232,6 +234,9 @@ main(int argc, char **argv)
 		fatal("%s: unveil", basedir);
 	if (unveil("/etc/ssl/", "r") == -1)
 		fatal("%s: unveil", "/etc/ssl/");
+	if ((opts.httpproxy = getenv(HTTP_PROXY)) != NULL &&
+	    *opts.httpproxy == '\0')
+		opts.httpproxy = NULL;
 
 	xml_data = fetch_notification_xml(uri, &opts);
 	process_notification_xml(xml_data, &opts);

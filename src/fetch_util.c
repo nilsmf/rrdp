@@ -1269,7 +1269,7 @@ fetch_xml_uri(struct xmldata *data) {
 	retried = 0;
 	if (data->hash)
 		SHA256_Init(&data->ctx);
-	if ((ret = url_get(data->uri, NULL, data)) != 0)
+	if ((ret = url_get(data->uri, data->opts->httpproxy, data)) != 0)
 		warnx("url_get failed");
 	else
 		ret = 200;
