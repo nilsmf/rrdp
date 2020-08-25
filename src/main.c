@@ -165,7 +165,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: rrdp [-l delta_limit][-f ftp_bin]"
+	fprintf(stderr, "usage: rrdp [-v] [-l delta_limit] [-f ftp_bin] "
 	    "[-i] -d cachedir uri\n");
 	exit(1);
 }
@@ -182,11 +182,12 @@ main(int argc, char **argv)
 	struct xmldata *xml_data;
 	opts.delta_limit = 0;
 	opts.ignore_withdraw = 0;
+	opts.verbose = 0;
 	opts.ftp_prog = "/usr/bin/ftp";
 
 	if (pledge("stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
 		fatal("pledge");
-	while ((opt = getopt(argc, argv, "d:f:il:")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:il:v")) != -1) {
 		switch (opt) {
 		case 'd':
 			cachedir = optarg;
@@ -200,16 +201,15 @@ main(int argc, char **argv)
 		case 'l':
 			opts.delta_limit = (int)strtol(optarg, NULL, BASE10);
 			break;
+		case 'v':
+			opts.verbose = 1;
+			break;
 		default:
 			usage();
 		}
 	}
 
-#ifdef DEBUG
-	log_init(1, LOG_USER);
-#else
-	log_init(0, LOG_USER);
-#endif
+	log_init(opts.verbose, LOG_USER);
 	argv += optind;
 	argc -= optind;
 
