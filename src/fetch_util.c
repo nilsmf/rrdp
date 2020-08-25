@@ -53,6 +53,20 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdlib.h>
+#include <tls.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <signal.h>
+#include <libgen.h>
+#include <unistd.h>
+#include <resolv.h>
+#include <errno.h>
+#include <poll.h>
+#include <util.h>
+#include <vis.h>
+#include <setjmp.h>
 
 #include "rrdp.h"
 #include "log.h"
@@ -64,6 +78,18 @@
 #define DATE_LEN 5
 #define LAST_MODIFIED "Last-Modified:"
 #define LAST_MODIFIED_LEN 14
+
+#define	HTTP_URL	"http://"	/* http URL prefix */
+#define	HTTPS_URL	"https://"	/* https URL prefix */
+#define HTTPS_PORT	443
+#define HTTP_PORT	80
+
+#define EMPTYSTRING(x)	((x) == NULL || (*(x) == '\0'))
+
+static jmp_buf  httpabort;
+int connect_timeout = 10;
+int redirect_loop;
+static int retried;
 
 struct header_data {
 	char date[TIME_LEN];
@@ -144,215 +170,6 @@ hash_check(unsigned char *obuff, const char *hash) {
 	}
 	return 0;
 }
-
-#ifdef RRDP_CURL
-#include <curl/curl.h>
-/* if we cant set curl options we are not going to be able to do much */
-static void
-xcurl_easy_setopt(CURL *handle, CURLoption option, void *parameter) {
-	if (curl_easy_setopt(handle, option, parameter) != CURLE_OK)
-		fatalx("failed to set curl option");
-}
-
-long
-fetch_xml_uri(struct xmldata *data)
-{
-	CURL *curl;
-	struct header_data header_data;
-	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	char curl_errors[CURL_ERROR_SIZE];
-	struct curl_slist *headers = NULL;
-	char *modified_since = NULL;
-	time_t current_time;
-	struct tm *gmt_time;
-	long response_code;
-
-	header_data.date[0] = '\0';
-	header_data.last_modified[0] = '\0';
-	if (!data || !data->uri) {
-		log_warnx("missing url");
-		return -1;
-	}
-	if (data->hash && strlen(data->hash) != SHA256_DIGEST_LENGTH*2) {
-		log_warnx("invalid hash");
-		return -1;
-	}
-	if ((curl = curl_easy_init()) == NULL)
-		fatal("curl init failure");
-
-	log_debuginfo("starting curl: %s", data->uri);
-	if (data->hash)
-		SHA256_Init(&data->ctx);
-	/* abuse that we never use modified since if we have a hash */
-	else {
-		if (strlen(data->modified_since) != 0) {
-			if ((asprintf(&modified_since, "%s: %s",
-			    IF_MODIFIED_SINCE, data->modified_since)) == -1)
-				fatal("%s - asprintf", __func__);
-			headers = curl_slist_append(headers, modified_since);
-		}
-		/* get current gmt time to save for next time */
-		if ((current_time = time(NULL)) == (time_t)-1)
-			fatal("%s - time", __func__);
-		if ((gmt_time = gmtime(&current_time)) == NULL)
-			fatal("%s - gmtime", __func__);
-		/*
-		 * XXXNF function is not allowed to be called again now in case
-		 * of network failure
-		 */
-		/* XXXNF what to do about localisation */
-		if (strftime(data->modified_since, TIME_LEN, TIME_FORMAT,
-		    gmt_time) != TIME_LEN - 1)
-			fatal("%s - strftime", __func__);
-	}
-	CURLcode res;
-	xcurl_easy_setopt(curl, CURLOPT_URL, data->uri);
-	xcurl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	xcurl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
-	xcurl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-	xcurl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
-	xcurl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
-	xcurl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_data);
-	xcurl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_errors);
-	res = curl_easy_perform(curl);
-	if (res == CURLE_OK)
-		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-	else if (res == 23)
-		log_warnx("aborting reading curl due to parse failure");
-	else
-		log_warnx("curl not ok (%d): %s", res, curl_errors);
-
-	curl_slist_free_all(headers);
-	free(modified_since);
-	curl_easy_cleanup(curl);
-	/* always clean the ctx up */
-	if (data->hash)
-		SHA256_Final(obuff, &data->ctx);
-	if (res != CURLE_OK)
-		return -1;
-	if (data->hash) {
-		if (hash_check(obuff, data->hash) == -1)
-			return -1;
-	}
-	if (strlen(header_data.last_modified) > 0)
-		strcpy(data->modified_since, header_data.last_modified);
-	else if (strlen(header_data.date) > 0)
-		strcpy(data->modified_since, header_data.date);
-
-	return response_code;
-}
-#elif RRDP_FTP /* RRDP_CURL */
-long
-fetch_xml_uri(struct xmldata *data) {
-	unsigned char obuff[SHA256_DIGEST_LENGTH];
-	int fds[2];
-	int pid, status;
-	char *const argv[8] = {data->opts->ftp_prog, "-V", "-U", USER_AGENT,
-		"-o", "-", data->uri, NULL};
-	int BUFF_SIZE = 500;
-	char buff[BUFF_SIZE];
-	size_t bytes_read;
-	long ret = 200;
-
-	if (!data || !data->uri) {
-		log_warnx("missing url");
-		return -1;
-	}
-	if (data->hash && strlen(data->hash) != SHA256_DIGEST_LENGTH*2) {
-		log_warnx("invalid hash");
-		return -1;
-	}
-	if (data->hash)
-		SHA256_Init(&data->ctx);
-
-	if (pipe(fds) != 0)
-		fatal("pipe");
-	if ((pid = fork()) == 0) {
-		if (unveil(argv[0], "x") == -1)
-			fatal("ftp: unveil");
-		/* pledge execpromises "stdio exec" */
-		close(fds[0]);
-		if (dup2(fds[1], STDOUT_FILENO) == -1)
-			fatal("dup2");
-		close(fds[1]);
-		execvp(argv[0], argv);
-		fatal("%s: execvp", argv[0]);
-	}
-	close(fds[1]);
-	while ((bytes_read = read(fds[0], buff, BUFF_SIZE)) > 0) {
-		if (write_callback(buff, 1, bytes_read, data) != bytes_read) {
-			ret = -1;
-			break;
-		}
-	}
-	if (bytes_read < 0)
-		fatal("read");
-	close(fds[0]);
-	if (waitpid(pid, &status, 0) == -1 || status != 0) {
-		warn("%s failed with %d", argv[0], status);
-		return -1;
-	}
-	if (data->hash) {
-		SHA256_Final(obuff, &data->ctx);
-		if (ret == 200 && hash_check(obuff, data->hash) == -1)
-			ret = -1;
-	}
-	return ret;
-}
-#else /* RRDP_FTP */
-#include <stdlib.h>
-#include <tls.h>
-#include <limits.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <signal.h>
-#include <libgen.h>
-#include <unistd.h>
-#include <resolv.h>
-#include <err.h>
-#include <errno.h>
-#include <poll.h>
-#include <util.h>
-#include <vis.h>
-#include <setjmp.h>
-
-#define debug 0
-#define verbose 0
-
-#define	HTTP_URL	"http://"	/* http URL prefix */
-#define	HTTPS_URL	"https://"	/* https URL prefix */
-#define HTTPS_PORT	443
-#define HTTP_PORT	80
-#define HASHBYTES     1024
-
-#define EMPTYSTRING(x)	((x) == NULL || (*(x) == '\0'))
-
-char * const ssl_verify_opts[] = {
-#define SSL_CAFILE		0
-	"cafile",
-#define SSL_CAPATH		1
-	"capath",
-#define SSL_CIPHERS		2
-	"ciphers",
-#define SSL_DONTVERIFY		3
-	"dont",
-#define SSL_DOVERIFY		4
-	"do",
-#define SSL_VERIFYDEPTH		5
-	"depth",
-#define SSL_MUSTSTAPLE		6
-	"muststaple",
-#define SSL_NOVERIFYTIME	7
-	"noverifytime",
-#define SSL_SESSION		8
-	"session",
-	NULL
-};
-
-static jmp_buf  httpabort;
-int connect_timeout = 10;
-int redirect_loop;
-static int retried;
 
 /*
  * Set the SIGALRM interval timer for wait seconds, 0 to disable.
@@ -653,8 +470,7 @@ proxy_connect(int socket, char *host, char *cookie)
 
 	if (l == -1)
 		fatal("Could not allocate memory to assemble connect string!");
-	if (debug)
-		printf("%s", connstr);
+	log_debug("%s", connstr);
 	if (write(socket, connstr, l) != l)
 		fatal("Could not send connect string");
 	read(socket, &buf, sizeof(buf)); /* only proxy header XXX: error
@@ -743,7 +559,6 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 	int fd = -1, out = -1;
 	volatile sig_t oldintr, oldinti;
 	FILE *fin = NULL;
-	off_t hashbytes;
 	const char *errstr;
 	ssize_t len;
 	char *proxyhost = NULL;
@@ -761,7 +576,6 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 	char *httpsport = "443";
 	char *httpport = "80";
 	off_t filesize;
-	int mark = HASHBYTES;
 	int family = PF_UNSPEC;
 	char *httpuseragent = "User-Agent: " USER_AGENT;
 	off_t bytes;
@@ -849,10 +663,9 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 
 	if (full_host == NULL)
 		full_host = xstrdup(host);
-	if (debug)
-		log_info("host %s, port %s, path %s, "
-		    "auth %s.\n", host, port, path,
-		    credentials ? credentials : "none");
+	log_debug("host %s, port %s, path %s, "
+	    "auth %s.\n", host, port, path,
+	    credentials ? credentials : "none");
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = family;
@@ -879,8 +692,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 		if (getnameinfo(res->ai_addr, res->ai_addrlen, hbuf,
 		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST) != 0)
 			strlcpy(hbuf, "(unknown)", sizeof(hbuf));
-		if (verbose)
-			log_info("Trying %s...\n", hbuf);
+		log_info("Trying %s...\n", hbuf);
 
 		fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 		if (fd == -1) {
@@ -1219,7 +1031,6 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 	oldintr = signal(SIGINT, aborthttp);
 
 	bytes = 0;
-	hashbytes = mark;
 
 	/* Finally, suck down the file. */
 	if (chunked) {
@@ -1320,4 +1131,3 @@ fetch_xml_uri(struct xmldata *data) {
 	return ret;
 }
 
-#endif /* RRDP_FTP */
