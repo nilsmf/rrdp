@@ -481,7 +481,7 @@ proxy_connect(int socket, char *host, char *cookie)
 
 static int
 save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
-    off_t *bytes)
+    off_t *bytes, struct xmldata *data)
 {
 	char			*header, *end, *cp;
 	unsigned long		chunksize;
@@ -518,8 +518,9 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
 			*bytes += rlen;
 			for (cp = buf, wlen = rlen; wlen > 0;
 			    wlen -= written, cp += written) {
-				if ((written = write(out, cp, wlen)) == -1) {
-					warn("Writing output file");
+				if ((written = write_callback(cp, 1, wlen,
+				    data)) == 0) {
+					warnx("parse error");
 					return -1;
 				}
 			}
@@ -1034,7 +1035,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 
 	/* Finally, suck down the file. */
 	if (chunked) {
-		error = save_chunked(fin, tls, out, buf, buflen, &bytes);
+		error = save_chunked(fin, tls, out, buf, buflen, &bytes, data);
 		signal(SIGINT, oldintr);
 		signal(SIGINFO, oldinti);
 		if (error == -1)
@@ -1042,7 +1043,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 	} else {
 		while ((len = fread(buf, 1, buflen, fin)) > 0) {
 			bytes += len;
-			if(write_callback(buf, 1, len, data) == 0) {
+			if (write_callback(buf, 1, len, data) == 0) {
 				warnx("parse error");
 				goto cleanup_url_get;
 			}
@@ -1056,8 +1057,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 			goto cleanup_url_get;
 		}
 	}
-	if (
-		filesize != -1 && len == 0 && bytes != filesize) {
+	if (filesize != -1 && len == 0 && bytes != filesize) {
 		log_info("Read short file.\n");
 		goto cleanup_url_get;
 	}
