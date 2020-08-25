@@ -86,8 +86,10 @@ get_value_from_header(char *buff, size_t buff_len, char *value, size_t val_len)
 	if (to_copy > val_len) {
 		to_copy = val_len;
 	}
-	strncpy(value, val, to_copy - 1);
-	value[to_copy - 1] = '\0';
+	if (val[to_copy - 1] == '\r' || val[to_copy - 1] == '\n')
+		to_copy--;
+	strncpy(value, val, to_copy);
+	value[to_copy] = '\0';
 }
 
 static size_t
@@ -727,7 +729,8 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
 }
 
 static int
-url_get(const char *origline, const char *proxyenv, struct xmldata *data)
+url_get(const char *origline, const char *proxyenv, struct xmldata *data,
+    struct header_data *header_data, char *modified_since)
 {
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
 	char *hosttail, *cause = "unknown", *newline, *host, *port, *buf = NULL;
@@ -973,6 +976,8 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 		if (credentials)
 			fprintf(fin, "Authorization: Basic %s\r\n",
 			    credentials);
+		if (modified_since)
+			fprintf(fin, "%s\r\n", modified_since);
 		if (proxy_credentials)
 			fprintf(fin, "Proxy-Authorization: Basic %s\r\n",
 			    proxy_credentials);
@@ -1010,6 +1015,8 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 		if (credentials)
 			fprintf(fin, "Authorization: Basic %s\r\n",
 			    credentials);
+		if (modified_since)
+			fprintf(fin, "%s\r\n", modified_since);
 		fprintf(fin, "\r\n");
 	}
 	free(epath);
@@ -1049,6 +1056,8 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 	case 301:	/* Moved Permanently */
 	case 302:	/* Found */
 	case 303:	/* See Other */
+	case 304:	/* See upstream can handle empty 304s */
+		break;
 	case 307:	/* Temporary Redirect */
 		isredirect++;
 		if (redirect_loop++ > 10) {
@@ -1146,7 +1155,8 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 				*loctail = '\0';
 			log_info("Redirected to %s\n", redirurl);
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(redirurl, proxyenv, data);
+			rval = url_get(redirurl, proxyenv, data, header_data,
+			    modified_since);
 			free(redirurl);
 			goto cleanup_url_get;
 #define RETRYAFTER "Retry-After: "
@@ -1167,6 +1177,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 			if (strcasecmp(cp, "chunked") == 0)
 				chunked = 1;
 		}
+		header_callback(buf, 1, len, header_data);
 		free(buf);
 	}
 
@@ -1182,7 +1193,8 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 			log_info("Retrying %s\n", origline);
 			retried = 1;
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(origline, proxyenv, data);
+			rval = url_get(origline, proxyenv, data, header_data,
+			    modified_since);
 		}
 		goto cleanup_url_get;
 	}
@@ -1239,7 +1251,7 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 		goto cleanup_url_get;
 	}
 
-	rval = 0;
+	rval = status;
 	goto cleanup_url_get;
 
 improper:
@@ -1262,22 +1274,49 @@ cleanup_url_get:
 
 long
 fetch_xml_uri(struct xmldata *data) {
+	char *modified_since = NULL;
+	time_t current_time;
+	struct tm *gmt_time;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
+	struct header_data header_data;
 	long ret = 200;
 
 	redirect_loop = 0;
 	retried = 0;
 	if (data->hash)
 		SHA256_Init(&data->ctx);
-	if ((ret = url_get(data->uri, data->opts->httpproxy, data)) != 0)
+	/* abuse that we never use modified since if we have a hash */
+	else {
+		if (strlen(data->modified_since) != 0) {
+			if ((asprintf(&modified_since, "%s: %s",
+			    IF_MODIFIED_SINCE, data->modified_since)) == -1)
+				fatal("%s - asprintf", __func__);
+		}
+		/* get current gmt time to save for next time */
+		if ((current_time = time(NULL)) == (time_t)-1)
+			fatal("%s - time", __func__);
+		if ((gmt_time = gmtime(&current_time)) == NULL)
+			fatal("%s - gmtime", __func__);
+		/* XXXNF what to do about localisation */
+		if (strftime(data->modified_since, TIME_LEN, TIME_FORMAT,
+		    gmt_time) != TIME_LEN - 1)
+			fatal("%s - strftime", __func__);
+	}
+	if ((ret = url_get(data->uri, data->opts->httpproxy, data,
+	    &header_data, modified_since)) == -1) {
+		free(modified_since);
 		warnx("url_get failed");
-	else
-		ret = 200;
+	}
+	free(modified_since);
 	if (data->hash) {
 		SHA256_Final(obuff, &data->ctx);
 		if (ret == 200 && hash_check(obuff, data->hash) == -1)
 			ret = -1;
 	}
+	if (strlen(header_data.last_modified) > 0)
+		strcpy(data->modified_since, header_data.last_modified);
+	else if (strlen(header_data.date) > 0)
+		strcpy(data->modified_since, header_data.date);
 	return ret;
 }
 
