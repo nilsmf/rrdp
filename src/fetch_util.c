@@ -347,12 +347,7 @@ char * const ssl_verify_opts[] = {
 	NULL
 };
 
-/* XXX NF constants to be checked */
-off_t bytes;
 static jmp_buf  httpabort;
-int tls_session_fd = -1;
-FILE  *ttyout = stderr;
-struct tls_config *tls_config;
 int connect_timeout = 10;
 int redirect_loop;
 static int retried;
@@ -380,10 +375,8 @@ alarmtimer(int wait)
 static void
 aborthttp(int signo)
 {
-	const char errmsg[] = "\nfetch aborted.\n";
-
 	alarmtimer(0);
-	write(fileno(ttyout), errmsg, sizeof(errmsg) - 1);
+	log_warnx("\nfetch aborted.\n");
 	longjmp(httpabort, 1);
 }
 
@@ -399,9 +392,6 @@ ftp_close(FILE **fin, struct tls **tls, int *fd)
 	int	ret;
 
 	if (*tls != NULL) {
-		if (tls_session_fd != -1)
-			dprintf(STDERR_FILENO, "tls session resumed: %s\n",
-			    tls_conn_session_resumed(*tls) ? "yes" : "no");
 		do {
 			ret = tls_close(*tls);
 		} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
@@ -519,7 +509,7 @@ urldecode(const char *str)
 	if (str == NULL)
 		return NULL;
 	if ((ret = malloc(strlen(str)+1)) == NULL)
-		err(1, "Can't allocate memory for URL decoding");
+		fatal("Can't allocate memory for URL decoding");
 	for (i = 0, reallen = 0; str[i] != '\0'; i++, reallen++, ret++) {
 		c = str[i];
 		if (c == '+') {
@@ -566,7 +556,7 @@ url_encode(const char *path)
 
 	epath = epathp = malloc(new_length + 1);	/* One more for '\0'. */
 	if (epath == NULL)
-		err(1, "Can't allocate memory for URL encoding");
+		fatal("Can't allocate memory for URL encoding");
 
 	/*
 	 * Second pass:
@@ -597,9 +587,9 @@ recode_credentials(const char *userinfo)
 	credsize = (ulen + 2) / 3 * 4 + 1;
 	creds = malloc(credsize);
 	if (creds == NULL)
-		errx(1, "out of memory");
+		fatal("out of memory");
 	if (b64_ntop(ui, ulen, creds, credsize) == -1)
-		errx(1, "error in base64 encoding");
+		fatal("error in base64 encoding");
 	free(ui);
 	return (creds);
 }
@@ -660,12 +650,11 @@ proxy_connect(int socket, char *host, char *cookie)
 	}
 
 	if (l == -1)
-		errx(1, "Could not allocate memory to assemble connect"
-		     "string!");
+		fatal("Could not allocate memory to assemble connect string!");
 	if (debug)
 		printf("%s", connstr);
 	if (write(socket, connstr, l) != l)
-		err(1, "Could not send connect string");
+		fatal("Could not send connect string");
 	read(socket, &buf, sizeof(buf)); /* only proxy header XXX: error
 	    handling? */
 	free(connstr);
@@ -673,7 +662,8 @@ proxy_connect(int socket, char *host, char *cookie)
 }
 
 static int
-save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen)
+save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
+    off_t *bytes)
 {
 	char			*header, *end, *cp;
 	unsigned long		chunksize;
@@ -707,7 +697,7 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen)
 			rlen = fread(buf, 1, rlen, fin);
 			if (rlen == 0)
 				break;
-			bytes += rlen;
+			*bytes += rlen;
 			for (cp = buf, wlen = rlen; wlen > 0;
 			    wlen -= written, cp += written) {
 				if ((written = write(out, cp, wlen)) == -1) {
@@ -737,8 +727,7 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen)
 }
 
 static int
-url_get(const char *origline, const char *proxyenv, const char *outfile, int
-	lastfile, struct xmldata *data)
+url_get(const char *origline, const char *proxyenv, struct xmldata *data)
 {
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
 	char *hosttail, *cause = "unknown", *newline, *host, *port, *buf = NULL;
@@ -746,7 +735,6 @@ url_get(const char *origline, const char *proxyenv, const char *outfile, int
 	int error, isredirect = 0, rval = -1;
 	int isunavail = 0, retryafter = -1;
 	struct addrinfo hints, *res0, *res;
-	const char *savefile;
 	char *proxyurl = NULL;
 	char *credentials = NULL, *proxy_credentials = NULL;
 	int fd = -1, out = -1;
@@ -771,62 +759,37 @@ url_get(const char *origline, const char *proxyenv, const char *outfile, int
 	char *httpport = "80";
 	off_t filesize;
 	int mark = HASHBYTES;
-	int hash;
 	int family = PF_UNSPEC;
 	char *httpuseragent = "User-Agent: " USER_AGENT;
+	off_t bytes;
+	struct tls_config *tls_config = NULL;
 
-
-	newline = strdup(origline);
-	if (newline == NULL)
-		errx(1, "Can't allocate memory to parse URL");
-	if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) == 0) {
-		host = newline + sizeof(HTTPS_URL) - 1;
-		scheme = HTTPS_URL;
-	} else
-		errx(1, "%s: URL not permitted", newline);
-
-	path = strchr(host, '/');		/* Find path */
-
-	if (EMPTYSTRING(path)) {
-		if (outfile) {				/* No slash, but */
-			path = strchr(host,'\0');	/* we have outfile. */
-			goto noslash;
-		}
-		warnx("No `/' after host (use -o): %s", origline);
+	newline = xstrdup(origline);
+	if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) != 0) {
+		warnx("%s: URL not permitted", newline);
 		goto cleanup_url_get;
 	}
-	*path++ = '\0';
-	if (EMPTYSTRING(path) && !outfile) {
-		warnx("No filename after host (use -o): %s", origline);
-		goto cleanup_url_get;
-	}
+	host = newline + sizeof(HTTPS_URL) - 1;
+	scheme = HTTPS_URL;
 
-noslash:
-	if (outfile)
-		savefile = outfile;
-	else {
-		if (path[strlen(path) - 1] == '/')	/* Consider no file */
-			savefile = NULL;		/* after dir invalid. */
-		else
-			savefile = basename(path);
-	}
+	path = strchr(host, '/');
 
-	if (EMPTYSTRING(savefile)) {
-		warnx("No filename after directory (use -o): %s", origline);
-		goto cleanup_url_get;
-	}
+	if (EMPTYSTRING(path))
+		path = strchr(host,'\0');
+	else
+		*path++ = '\0';
 
 	if (proxyenv != NULL) {		/* use proxy */
 		sslpath = strdup(path);
 		sslhost = strdup(host);
 		if (! sslpath || ! sslhost)
-			errx(1, "Can't allocate memory for https path/host.");
+			fatal("Can't allocate memory for https path/host.");
 		proxyhost = strdup(host);
 		if (proxyhost == NULL)
-			errx(1, "Can't allocate memory for proxy host.");
+			fatal("Can't allocate memory for proxy host.");
 		proxyurl = strdup(proxyenv);
 		if (proxyurl == NULL)
-			errx(1, "Can't allocate memory for proxy URL.");
+			fatal("Can't allocate memory for proxy URL.");
 		if (strncasecmp(proxyurl, HTTP_URL, sizeof(HTTP_URL) - 1) == 0)
 			host = proxyurl + sizeof(HTTP_URL) - 1;
 		else {
@@ -843,7 +806,7 @@ noslash:
 		if (!EMPTYSTRING(path))
 			*path++ = '\0';		/* i guess this ++ is useless */
 
-		path = strchr(host, '@');	/* look for credentials in proxy */
+		path = strchr(host, '@');	/* look for proxy credentials */
 		if (!EMPTYSTRING(path)) {
 			*path = '\0';
 			if (strchr(host, ':') == NULL) {
@@ -872,7 +835,7 @@ noslash:
 		host++;
 		*hosttail++ = '\0';
 		if (asprintf(&full_host, "[%s]", host) == -1)
-			errx(1, "Cannot allocate memory for hostname");
+			fatal("Cannot allocate memory for hostname");
 	} else
 		hosttail = host;
 
@@ -882,21 +845,16 @@ noslash:
 	port = portnum ? portnum : httpsport;
 
 	if (full_host == NULL)
-		if ((full_host = strdup(host)) == NULL)
-			errx(1, "Cannot allocate memory for hostname");
+		full_host = xstrdup(host);
 	if (debug)
-		fprintf(ttyout, "host %s, port %s, path %s, "
-		    "save as %s, auth %s.\n", host, port, path,
-		    savefile, credentials ? credentials : "none");
+		log_info("host %s, port %s, path %s, "
+		    "auth %s.\n", host, port, path,
+		    credentials ? credentials : "none");
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = family;
 	hints.ai_socktype = SOCK_STREAM;
 	error = getaddrinfo(host, port, &hints, &res0);
-	/*
-	 * XXXNF i think this whole thing is useless now... we'll always have
-	 * https port or do exactly the same ting again
-	 */
 	/*
 	 * If the services file is corrupt/missing, fall back
 	 * on our hard-coded defines.
@@ -913,17 +871,13 @@ noslash:
 		goto cleanup_url_get;
 	}
 
-	/* ensure consistent order of the output */
-	if (verbose)
-		setvbuf(ttyout, NULL, _IOLBF, 0);
-
 	fd = -1;
 	for (res = res0; res; res = res->ai_next) {
 		if (getnameinfo(res->ai_addr, res->ai_addrlen, hbuf,
 		    sizeof(hbuf), NULL, 0, NI_NUMERICHOST) != 0)
 			strlcpy(hbuf, "(unknown)", sizeof(hbuf));
 		if (verbose)
-			fprintf(ttyout, "Trying %s...\n", hbuf);
+			log_info("Trying %s...\n", hbuf);
 
 		fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 		if (fd == -1) {
@@ -972,28 +926,26 @@ noslash:
 		path = sslpath;
 	}
 	if (sslhost == NULL) {
-		sslhost = strdup(host);
-		if (sslhost == NULL)
-			errx(1, "Can't allocate memory for https host.");
+		sslhost = xstrdup(host);
 	}
 	if ((tls = tls_client()) == NULL) {
-		fprintf(ttyout, "failed to create SSL client\n");
+		log_warnx("failed to create SSL client\n");
 		goto cleanup_url_get;
 	}
 	if (tls_configure(tls, tls_config) != 0) {
-		fprintf(ttyout, "TLS configuration failure: %s\n",
+		log_warnx("TLS configuration failure: %s\n",
 		    tls_error(tls));
 		goto cleanup_url_get;
 	}
 	if (tls_connect_socket(tls, fd, sslhost) != 0) {
-		fprintf(ttyout, "TLS connect failure: %s\n", tls_error(tls));
+		log_warnx("TLS connect failure: %s\n", tls_error(tls));
 		goto cleanup_url_get;
 	}
 	do {
 		ret = tls_handshake(tls);
 	} while (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT);
 	if (ret != 0) {
-		fprintf(ttyout, "TLS handshake failure: %s\n", tls_error(tls));
+		log_warnx("TLS handshake failure: %s\n", tls_error(tls));
 		goto cleanup_url_get;
 	}
 	fin = funopen(tls, stdio_tls_read_wrapper,
@@ -1009,10 +961,7 @@ noslash:
 	 */
 	epath = url_encode(path);
 	if (proxyurl) {
-		if (verbose) {
-			fprintf(ttyout, "Requesting %s (via %s)\n",
-			    origline, proxyurl);
-		}
+		log_info("Requesting %s (via %s)\n", origline, proxyurl);
 		/*
 		 * Host: directive must use the destination host address for
 		 * the original URI (path).
@@ -1029,8 +978,7 @@ noslash:
 			    proxy_credentials);
 		fprintf(fin, "\r\n");
 	} else {
-		if (verbose)
-			fprintf(ttyout, "Requesting %s\n", origline);
+		log_info("Requesting %s\n", origline);
 		fprintf(fin,
 		    "GET /%s HTTP/1.1\r\n"
 		    "Connection: close\r\n"
@@ -1043,9 +991,7 @@ noslash:
 			 * strip off scoped address portion, since it's
 			 * local to node
 			 */
-			h = strdup(host);
-			if (h == NULL)
-				errx(1, "Can't allocate memory.");
+			h = xstrdup(host);
 			if ((p = strchr(h, '%')) != NULL)
 				*p = '\0';
 			fprintf(fin, "[%s]", h);
@@ -1079,8 +1025,7 @@ noslash:
 
 	while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
 		buf[--len] = '\0';
-	if (debug)
-		fprintf(ttyout, "received '%s'\n", buf);
+	log_debug("received '%s'\n", buf);
 
 	cp = strchr(buf, ' ');
 	if (cp == NULL)
@@ -1139,8 +1084,7 @@ noslash:
 			buf[--len] = '\0';
 		if (len == 0)
 			break;
-		if (debug)
-			fprintf(ttyout, "received '%s'\n", buf);
+		log_debug("received '%s'\n", buf);
 
 		/* Look for some headers */
 		cp = buf;
@@ -1162,7 +1106,7 @@ noslash:
 			 * is not relative. RFC 3986 4.2
 			 */
 			if (cp[strcspn(cp, ":/")] != ':') {
-				errx(1, "Relative redirect not supported");
+				fatalx("Relative redirect not supported");
 				/* XXX doesn't handle protocol-relative URIs */
 				if (*cp == '/') {
 					locbase = NULL;
@@ -1170,7 +1114,7 @@ noslash:
 				} else {
 					locbase = strdup(path);
 					if (locbase == NULL)
-						errx(1, "Can't allocate memory"
+						fatalx("Can't allocate memory"
 						    " for location base");
 					loctail = strchr(locbase, '#');
 					if (loctail != NULL)
@@ -1192,18 +1136,17 @@ noslash:
 				    portnum ? portnum : "",
 				    locbase ? locbase : "",
 				    cp) == -1)
-					errx(1, "Cannot build "
+					fatalx("Cannot build "
 					    "redirect URL");
 				free(locbase);
-			} else if ((redirurl = strdup(cp)) == NULL)
-				errx(1, "Cannot allocate memory for URL");
+			} else
+				redirurl = xstrdup(cp);
 			loctail = strchr(redirurl, '#');
 			if (loctail != NULL)
 				*loctail = '\0';
-			if (verbose)
-				fprintf(ttyout, "Redirected to %s\n", redirurl);
+			log_info("Redirected to %s\n", redirurl);
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(redirurl, proxyenv, savefile, lastfile, data);
+			rval = url_get(redirurl, proxyenv, data);
 			free(redirurl);
 			goto cleanup_url_get;
 #define RETRYAFTER "Retry-After: "
@@ -1236,11 +1179,10 @@ noslash:
 			warnx("Error retrieving %s: 503 Service Unavailable",
 			    origline);
 		else {
-			if (verbose)
-				fprintf(ttyout, "Retrying %s\n", origline);
+			log_info("Retrying %s\n", origline);
 			retried = 1;
 			ftp_close(&fin, &tls, &fd);
-			rval = url_get(origline, proxyenv, savefile, lastfile, data);
+			rval = url_get(origline, proxyenv, data);
 		}
 		goto cleanup_url_get;
 	}
@@ -1250,7 +1192,7 @@ noslash:
 
 	free(buf);
 	if ((buf = malloc(buflen)) == NULL)
-		errx(1, "Can't allocate memory for transfer buffer");
+		fatal("Can't allocate memory for transfer buffer");
 
 	/* Trap signals */
 	oldintr = NULL;
@@ -1269,7 +1211,7 @@ noslash:
 
 	/* Finally, suck down the file. */
 	if (chunked) {
-		error = save_chunked(fin, tls, out, buf, buflen);
+		error = save_chunked(fin, tls, out, buf, buflen, &bytes);
 		signal(SIGINT, oldintr);
 		signal(SIGINFO, oldinti);
 		if (error == -1)
@@ -1277,21 +1219,6 @@ noslash:
 	} else {
 		while ((len = fread(buf, 1, buflen, fin)) > 0) {
 			bytes += len;
-		/*	for (cp = buf; len > 0; len -= wlen, cp += wlen) {
-				if ((wlen = write(out, cp, len)) == -1) {
-					warn("Writing %s", savefile);
-					signal(SIGINT, oldintr);
-					signal(SIGINFO, oldinti);
-					goto cleanup_url_get;
-				}
-			} */
-			if (hash) {
-				while (bytes >= hashbytes) {
-					(void)putc('#', ttyout);
-					hashbytes += mark;
-				}
-				(void)fflush(ttyout);
-			}
 			if(write_callback(buf, 1, len, data) == 0) {
 				warnx("parse error");
 				goto cleanup_url_get;
@@ -1300,12 +1227,6 @@ noslash:
 		save_errno = errno;
 		signal(SIGINT, oldintr);
 		signal(SIGINFO, oldinti);
-		if (hash && bytes > 0) {
-			if (bytes < mark)
-				(void)putc('#', ttyout);
-			(void)putc('\n', ttyout);
-			(void)fflush(ttyout);
-		}
 		if (len == 0 && ferror(fin)) {
 			errno = save_errno;
 			warnx("Reading from socket: %s", sockerror(tls));
@@ -1314,8 +1235,7 @@ noslash:
 	}
 	if (
 		filesize != -1 && len == 0 && bytes != filesize) {
-		if (verbose)
-			fputs("Read short file.\n", ttyout);
+		log_info("Read short file.\n");
 		goto cleanup_url_get;
 	}
 
@@ -1349,7 +1269,7 @@ fetch_xml_uri(struct xmldata *data) {
 	retried = 0;
 	if (data->hash)
 		SHA256_Init(&data->ctx);
-	if ((ret = url_get(data->uri, NULL, "-", 1, data)) != 0)
+	if ((ret = url_get(data->uri, NULL, data)) != 0)
 		warnx("url_get failed");
 	else
 		ret = 200;
