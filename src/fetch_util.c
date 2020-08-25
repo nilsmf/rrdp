@@ -866,11 +866,11 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 		/* FALLTHROUGH */
 	case 206:	/* Partial Content */
 		break;
+	case 304:	/* See upstream can handle empty 304s */
+		break;
 	case 301:	/* Moved Permanently */
 	case 302:	/* Found */
 	case 303:	/* See Other */
-	case 304:	/* See upstream can handle empty 304s */
-		break;
 	case 307:	/* Temporary Redirect */
 		isredirect++;
 		if (redirect_loop++ > 10) {
