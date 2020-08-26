@@ -19,7 +19,6 @@
 struct opts {
 	char *basedir_primary;
 	char *basedir_working;
-	char *ftp_prog;
 	char *httpproxy;
 	int primary_dir;
 	int working_dir;

@@ -28,12 +28,12 @@
 #define HTTP_PROXY      "http_proxy"
 
 static int
-rm_working_dir(struct opts *opts)
+rm_working_dir(struct opts *opts, int min_del_level)
 {
 	int ret;
-	if (close(opts->working_dir))
+	if (min_del_level == 0 && close(opts->working_dir))
 		fatal("%s - close", __func__);
-	if ((ret = rm_dir(opts->basedir_working, 0)) != 0) {
+	if ((ret = rm_dir(opts->basedir_working, min_del_level)) != 0) {
 		log_warnx("%s - failed to remove working dir", __func__);
 		ret = 1;
 	}
@@ -86,7 +86,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 	case NOTIFICATION_STATE_ERROR:
 		fatalx("NOTIFICATION_STATE_ERROR");
 	case NOTIFICATION_STATE_NONE:
-		rm_working_dir(opts);
+		rm_working_dir(opts, 0);
 		log_debuginfo("up to date");
 		return;
 	case NOTIFICATION_STATE_DELTAS:
@@ -135,17 +135,15 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			log_warnx("not all deltas processed: %d/%d", num_deltas,
 			    expected_deltas);
 		/* Clean up the snapshot delta dir and make a new one */
-		rm_working_dir(opts);
-		free_workdir(opts);
+		rm_working_dir(opts, 1);
 		log_warnx("deltas failed going to snapshot");
-		make_workdir(opts->basedir_primary, opts);
 		/* FALLTHROUGH */
 	case NOTIFICATION_STATE_SNAPSHOT:
 		log_debuginfo("fetching snapshot");
 		/* XXXCJ check that uri points to same host */
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
 		    nxml->snapshot_hash, opts, nxml) != 0) {
-			rm_working_dir(opts);
+			rm_working_dir(opts, 0);
 			fatalx("failed to run snapshot");
 		}
 		/*
@@ -156,7 +154,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		if (mv_delta(opts->basedir_working,
 		    opts->basedir_primary, opts->primary_dir) != 0) {
 			rm_primary_dir(opts);
-			rm_working_dir(opts);
+			rm_working_dir(opts, 0);
 			fatal("failed to update");
 		}
 		log_debuginfo("snapshot move success");
@@ -185,17 +183,13 @@ main(int argc, char **argv)
 	opts.delta_limit = 0;
 	opts.ignore_withdraw = 0;
 	opts.verbose = 0;
-	opts.ftp_prog = "/usr/bin/ftp";
 
-	if (pledge("dns inet tty stdio rpath wpath cpath fattr proc unveil exec", NULL) == -1)
+	if (pledge("dns inet tty stdio rpath wpath cpath fattr unveil", NULL) == -1)
 		fatal("pledge");
 	while ((opt = getopt(argc, argv, "d:f:il:v")) != -1) {
 		switch (opt) {
 		case 'd':
 			cachedir = optarg;
-			break;
-		case 'f':
-			opts.ftp_prog = optarg;
 			break;
 		case 'i':
 			opts.ignore_withdraw = 1;
@@ -232,8 +226,14 @@ main(int argc, char **argv)
 	make_workdir(basedir, &opts);
 	if (unveil(basedir, "crw") == -1)
 		fatal("%s: unveil", basedir);
+	if (unveil(opts.basedir_working, "crw") == -1)
+		fatal("%s: unveil", opts.basedir_working);
 	if (unveil("/etc/ssl/", "r") == -1)
 		fatal("%s: unveil", "/etc/ssl/");
+	if (unveil(NULL, NULL) == -1)
+		fatal("unveil");
+	if (pledge("dns inet tty stdio rpath wpath cpath fattr", NULL) == -1)
+		fatal("pledge");
 	if ((opts.httpproxy = getenv(HTTP_PROXY)) != NULL &&
 	    *opts.httpproxy == '\0')
 		opts.httpproxy = NULL;

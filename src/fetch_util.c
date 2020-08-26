@@ -906,7 +906,6 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 			buf[--len] = '\0';
 		if (len == 0)
 			break;
-		log_debug("received '%s'\n", buf);
 
 		/* Look for some headers */
 		cp = buf;
