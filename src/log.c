@@ -38,10 +38,11 @@ log_init(int n_debug, int facility)
 	debug = n_debug;
 	verbose = n_debug;
 	log_procinit(__progname);
-
-	if (!debug)
-		openlog(__progname, LOG_PID | LOG_NDELAY, facility);
-
+/*
+ * XXXNF Don't go to syslog
+ *	if (!debug)
+ *		openlog(__progname, LOG_PID | LOG_NDELAY, facility);
+*/
 	tzset();
 }
 
@@ -139,9 +140,11 @@ log_info(const char *emsg, ...)
 {
 	va_list	 ap;
 
-	va_start(ap, emsg);
-	vlog(LOG_INFO, emsg, ap);
-	va_end(ap);
+	if (verbose) {
+		va_start(ap, emsg);
+		vlog(LOG_INFO, emsg, ap);
+		va_end(ap);
+	}
 }
 
 void

@@ -165,8 +165,8 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 static __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: rrdp [-v] [-l delta_limit] [-f ftp_bin] "
-	    "[-i] -d cachedir uri\n");
+	fprintf(stderr, "usage: rrdp [-v] [-l delta_limit] [-i] "
+	    "-d cachedir uri\n");
 	exit(1);
 }
 

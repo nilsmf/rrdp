@@ -143,6 +143,11 @@ check_state(struct notification_xml *nxml)
 		return;
 	}
 
+	/* Exit early if we have not yet parsed the deltas */
+	if (nxml->scope <= NOTIFICATION_SCOPE_DELTA) {
+		return;
+	}
+
 	/* current serial is greater lets try deltas */
 	TAILQ_FOREACH(d, &(nxml->delta_q), q) {
 		serial_counter++;
