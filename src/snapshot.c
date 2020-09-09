@@ -287,11 +287,7 @@ static void
 setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
     char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
 {
-	xml_data->uri = uri;
 	xml_data->opts = opts;
-	xml_data->hash = hash;
-	/* snapshot doesn't use modified since */
-	xml_data->modified_since[0] = '\0';
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
@@ -314,8 +310,10 @@ fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
 	struct xmldata xml_data;
 	struct snapshot_xml snapshot_xml;
 	int ret = 0;
+
 	setup_xml_data(&xml_data, &snapshot_xml, uri, hash, opts, nxml);
-	if (fetch_xml_uri(&xml_data) != 200)
+	ret = fetch_uri_data(uri, hash, NULL, opts, xml_data.parser);
+	if (ret != 200)
 		ret = 1;
 	free_snapshot_xml_data(&xml_data);
 	return ret;

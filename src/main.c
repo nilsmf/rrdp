@@ -21,6 +21,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "log.h"
 #include "rrdp.h"
@@ -48,30 +49,6 @@ rm_primary_dir(struct opts *opts)
 	 * It has an open fd we will use.
 	 */
 	return rm_dir(opts->basedir_primary, 1);
-}
-
-static struct xmldata*
-fetch_notification_xml(char* uri, struct opts *opts)
-{
-	struct xmldata *xml_data = new_notification_xml_data(uri, opts);
-	long res;
-	res = fetch_xml_uri(xml_data);
-	if (res != 200 && res != 304)
-		fatalx("%s", __func__);
-
-	struct notification_xml *nxml = xml_data->xml_data;
-
-	if (!nxml)
-		fatalx("no notification_xml available");
-	if (res == 304) {
-		log_debuginfo("Got up to date return code from server");
-		nxml->state = NOTIFICATION_STATE_NONE;
-	} else {
-		/* one last check in case empty values returned */
-		check_state(nxml);
-	}
-	log_notification_xml(nxml);
-	return xml_data;
 }
 
 static void
@@ -105,7 +82,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			if (num_deltas < opts->delta_limit ||
 			    !opts->delta_limit) {
 				if (fetch_delta_xml(d->uri, d->hash,
-				    opts, nxml) == 0)
+				    opts, nxml) == 200)
 					num_deltas++;
 				else {
 					log_warnx("failed to fetch delta %s",
@@ -142,7 +119,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		log_debuginfo("fetching snapshot");
 		/* XXXCJ check that uri points to same host */
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
-		    nxml->snapshot_hash, opts, nxml) != 0) {
+		    nxml->snapshot_hash, opts, nxml) != 200) {
 			rm_working_dir(opts, 0);
 			fatalx("failed to run snapshot");
 		}
@@ -170,6 +147,42 @@ usage(void)
 	exit(1);
 }
 
+static void
+proc_xml_process(char *notification_uri, struct opts *opts)
+{
+	struct xmldata *xml_data = new_notification_xml_data(notification_uri,
+	    opts);
+	int res;
+
+	res = fetch_uri_data(notification_uri, NULL, xml_data->modified_since,
+	    opts, xml_data->parser);
+	if (res != 200 && res != 304)
+		fatalx("%d %s res", res, __func__);
+
+	struct notification_xml *nxml = xml_data->xml_data;
+
+	if (!nxml)
+		fatalx("no notification_xml available");
+	if (res == 304) {
+		log_debuginfo("Got up to date return code from server");
+		nxml->state = NOTIFICATION_STATE_NONE;
+	} else {
+		/* one last check in case empty values returned */
+		check_state(nxml);
+	}
+	log_notification_xml(nxml);
+	process_notification_xml(xml_data, opts);
+	free_xml_data(xml_data);
+}
+
+static void
+proc_uri_process(int uri_rpipe, int xml_wpipe, int res_wpipe, char *httpproxy)
+{
+	for(;;) {
+		read_uri(uri_rpipe, xml_wpipe, res_wpipe, httpproxy);
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -178,13 +191,17 @@ main(int argc, char **argv)
 	char *uri = NULL;
 	char *basedir;
 	struct stat st;
-	int opt;
-	struct xmldata *xml_data;
+	int opt, procpid;
+	int uri_pipe[2]; /* send uri_data to be fetched */
+	int xml_pipe[2]; /* send xml that was fetched from uri */
+	int res_pipe[2]; /* send return type of fetch */
+	char *httpproxy;
 	opts.delta_limit = 0;
 	opts.ignore_withdraw = 0;
 	opts.verbose = 0;
 
-	if (pledge("dns inet tty stdio rpath wpath cpath fattr unveil", NULL) == -1)
+	if (pledge("dns inet tty stdio rpath wpath cpath fattr unveil proc",
+	    NULL) == -1)
 		fatal("pledge");
 	while ((opt = getopt(argc, argv, "d:f:il:v")) != -1) {
 		switch (opt) {
@@ -224,23 +241,59 @@ main(int argc, char **argv)
 	if (opts.primary_dir < 0)
 		fatal("failed to open dir: %s", basedir);
 	make_workdir(basedir, &opts);
-	if (unveil(basedir, "crw") == -1)
-		fatal("%s: unveil", basedir);
-	if (unveil(opts.basedir_working, "crw") == -1)
-		fatal("%s: unveil", opts.basedir_working);
-	if (unveil("/etc/ssl/", "r") == -1)
-		fatal("%s: unveil", "/etc/ssl/");
-	if (unveil(NULL, NULL) == -1)
-		fatal("unveil");
-	if (pledge("dns inet tty stdio rpath wpath cpath fattr", NULL) == -1)
-		fatal("pledge");
-	if ((opts.httpproxy = getenv(HTTP_PROXY)) != NULL &&
-	    *opts.httpproxy == '\0')
-		opts.httpproxy = NULL;
 
-	xml_data = fetch_notification_xml(uri, &opts);
-	process_notification_xml(xml_data, &opts);
-	free_xml_data(xml_data);
+	if(pipe(uri_pipe) != 0)
+		fatal("pipe");
+	if(pipe(xml_pipe) != 0)
+		fatal("pipe");
+	if(pipe(res_pipe) != 0)
+		fatal("pipe");
+
+	/* split off fetch caller */
+	if((procpid = fork()) == -1)
+		fatal("fork");
+
+	if(procpid == 0) {
+		if (unveil("/etc/ssl/", "r") == -1)
+			fatal("%s: unveil", "/etc/ssl/");
+		if (unveil(NULL, NULL) == -1)
+			fatal("unveil");
+		if (pledge("dns inet stdio rpath wpath", NULL) == -1)
+			fatal("pledge");
+		if ((httpproxy = getenv(HTTP_PROXY)) != NULL &&
+		    httpproxy == '\0')
+			httpproxy = NULL;
+		close(uri_pipe[1]);
+		close(xml_pipe[0]);
+		close(res_pipe[0]);
+		proc_uri_process(uri_pipe[0], xml_pipe[1], res_pipe[1],
+		    httpproxy);
+	}
+
+	/* split off xml processing */
+	if((procpid = fork()) == -1)
+		fatal("fork");
+
+	if(procpid == 0) {
+		if (unveil(basedir, "crw") == -1)
+			fatal("%s: unveil", basedir);
+		if (unveil(opts.basedir_working, "crw") == -1)
+			fatal("%s: unveil", opts.basedir_working);
+		if (unveil(NULL, NULL) == -1)
+			fatal("unveil");
+		if (pledge("stdio rpath wpath cpath fattr", NULL) == -1)
+			fatal("pledge");
+		close(uri_pipe[0]);
+		close(xml_pipe[1]);
+		close(res_pipe[1]);
+		opts.uri_wpipe = uri_pipe[1];
+		opts.xml_rpipe = xml_pipe[0];
+		opts.res_rpipe = res_pipe[0];
+		proc_xml_process(uri, &opts);
+	}
+	int status;
+	waitpid(procpid, &status, 0);
+
 	close(opts.primary_dir);
 	free_workdir(&opts);
 	free(basedir);

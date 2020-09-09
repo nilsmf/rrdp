@@ -139,7 +139,7 @@ validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
 	}
 	fclose(f);
 	if (!SHA256_Final(obuff, &ctx) || !hash ||
-	    strlen(hash) < 2*SHA256_DIGEST_LENGTH)
+	    strlen(hash) < HASH_CHAR_LEN)
 		return VALIDATE_RETURN_HASH_MISMATCH;
 	for (int n = 0; n < SHA256_DIGEST_LENGTH; n++) {
 		if (sscanf(&hash[2*n], "%2hhx", &bin_hash[n]) != 1)
@@ -392,11 +392,7 @@ static void
 setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
     char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
 {
-	xml_data->uri = uri;
 	xml_data->opts = opts;
-	xml_data->hash = hash;
-	/* delta doesn't use modified since */
-	xml_data->modified_since[0] = '\0';
 
 	xml_data->parser = XML_ParserCreate(NULL);
 	if (xml_data->parser == NULL)
@@ -420,8 +416,7 @@ fetch_delta_xml(char *uri, char *hash, struct opts *opts,
 	struct delta_xml delta_xml;
 	int ret = 0;
 	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml);
-	if (fetch_xml_uri(&xml_data) != 200)
-		ret = 1;
+	ret = fetch_uri_data(uri, hash, NULL, opts, xml_data.parser);
 	free_delta_xml_data(&xml_data);
 	return ret;
 }

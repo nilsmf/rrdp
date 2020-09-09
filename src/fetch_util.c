@@ -137,35 +137,26 @@ header_callback(char *buffer, size_t size, size_t nitems, void *userdata)
 static size_t
 write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
-	struct xmldata *xml_data = userdata;
-	XML_Parser p = xml_data->parser;
-	if (xml_data->hash)
-		SHA256_Update(&xml_data->ctx, (const u_int8_t *)ptr, nmemb);
-	if (!p)
-		return 0;
-	if (!XML_Parse(p, ptr, nmemb, 0)) {
-		fprintf(stderr, "Parse error at line %lu:\n%s\n",
-			XML_GetCurrentLineNumber(p),
-			XML_ErrorString(XML_GetErrorCode(p)));
-		return 0;
-	}
+	struct uri_data *uri_data = userdata;
+	if (uri_data->uri_type == URI_TYPE_HASH)
+		SHA256_Update(&uri_data->ctx, (const u_int8_t *)ptr, nmemb);
+	write(uri_data->xml_wpipe, ptr, nmemb);
 	return nmemb;
 }
 
 static int
 hash_check(unsigned char *obuff, const char *hash) {
 	int n;
-	char obuff_hex[SHA256_DIGEST_LENGTH*2 + 1];
+	char obuff_hex[HASH_CHAR_LEN + 1];
 
 	for (n = 0; n < SHA256_DIGEST_LENGTH; n++) {
 		sprintf(obuff_hex + 2*n, "%02x",
 		    (unsigned int)obuff[n]);
 	}
-	if (strncasecmp(hash, obuff_hex,
-	    SHA256_DIGEST_LENGTH*2)) {
+	if (strncasecmp(hash, obuff_hex, HASH_CHAR_LEN)) {
 		log_warnx("hash mismatch \n   '%.*s'\nvs '%.*s'",
-		    SHA256_DIGEST_LENGTH*2, hash,
-		    SHA256_DIGEST_LENGTH*2, obuff_hex);
+		    HASH_CHAR_LEN, hash,
+		    HASH_CHAR_LEN, obuff_hex);
 		return -1;
 	}
 	return 0;
@@ -481,7 +472,7 @@ proxy_connect(int socket, char *host, char *cookie)
 
 static int
 save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
-    off_t *bytes, struct xmldata *data)
+    off_t *bytes, struct uri_data *data)
 {
 	char			*header, *end, *cp;
 	unsigned long		chunksize;
@@ -546,7 +537,7 @@ save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
 }
 
 static int
-url_get(const char *origline, const char *proxyenv, struct xmldata *data,
+url_get(const char *origline, const char *proxyenv, struct uri_data *data,
     struct header_data *header_data, char *modified_since)
 {
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST], *cp, *portnum, *path, ststr[4];
@@ -918,6 +909,11 @@ url_get(const char *origline, const char *proxyenv, struct xmldata *data,
 			filesize = strtonum(cp, 0, LLONG_MAX, &errstr);
 			if (errstr != NULL)
 				goto improper;
+			/* XXXNF if something goes wrong we may not write
+			 * this... */
+			if (write(data->res_wpipe, &filesize, sizeof(off_t))
+			    == -1)
+				fatal("write");
 #define LOCATION "Location: "
 		} else if (isredirect &&
 		    strncasecmp(cp, LOCATION, sizeof(LOCATION) - 1) == 0) {
@@ -1082,26 +1078,28 @@ cleanup_url_get:
 	return (rval);
 }
 
-long
-fetch_xml_uri(struct xmldata *data) {
+static int
+fetch_xml_uri(struct uri_data *data, char *httpproxy) {
 	char *modified_since = NULL;
 	time_t current_time;
 	struct tm *gmt_time;
 	unsigned char obuff[SHA256_DIGEST_LENGTH];
 	struct header_data header_data;
-	long ret = 200;
+	int ret = 200;
 
 	redirect_loop = 0;
 	retried = 0;
-	if (data->hash)
+	if (data->uri_type == URI_TYPE_HASH)
 		SHA256_Init(&data->ctx);
-	/* abuse that we never use modified since if we have a hash */
-	else {
-		if (strlen(data->modified_since) != 0) {
-			if ((asprintf(&modified_since, "%s: %s",
-			    IF_MODIFIED_SINCE, data->modified_since)) == -1)
-				fatal("%s - asprintf", __func__);
-		}
+	/*
+	 * Set a new modified_since with preference header>notify>client time.
+	 * We do the lowest priority now, then 2nd lowest priority within
+	 * notification processing, then headers if we get them
+	 */
+	else if (data->uri_type == URI_TYPE_MODIFIED_SINCE) {
+		if ((asprintf(&modified_since, "%s: %s",
+		    IF_MODIFIED_SINCE, data->modified_since)) == -1)
+			fatal("%s - asprintf", __func__);
 		/* get current gmt time to save for next time */
 		if ((current_time = time(NULL)) == (time_t)-1)
 			fatal("%s - time", __func__);
@@ -1112,21 +1110,179 @@ fetch_xml_uri(struct xmldata *data) {
 		    gmt_time) != TIME_LEN - 1)
 			fatal("%s - strftime", __func__);
 	}
-	if ((ret = url_get(data->uri, data->opts->httpproxy, data,
-	    &header_data, modified_since)) == -1) {
+
+	if ((ret = url_get(data->uri, httpproxy, data, &header_data,
+	    modified_since)) == -1) {
 		free(modified_since);
 		warnx("url_get failed");
 	}
 	free(modified_since);
-	if (data->hash) {
+
+	if (data->uri_type == URI_TYPE_HASH) {
 		SHA256_Final(obuff, &data->ctx);
 		if (ret == 200 && hash_check(obuff, data->hash) == -1)
 			ret = -1;
 	}
-	if (strlen(header_data.last_modified) > 0)
-		strcpy(data->modified_since, header_data.last_modified);
-	else if (strlen(header_data.date) > 0)
-		strcpy(data->modified_since, header_data.date);
+	if (ret == 200 && data->uri_type == URI_TYPE_MODIFIED_SINCE) {
+		if (strlen(header_data.last_modified) > 0) {
+			strncpy(data->modified_since, header_data.last_modified,
+			    TIME_LEN);
+		}
+		else if (strlen(header_data.date) > 0) {
+			strncpy(data->modified_since, header_data.date,
+			    TIME_LEN);
+		}
+	}
+
 	return ret;
+}
+
+void
+read_uri(int uri_rpipe, int xml_wpipe, int res_wpipe, char *httpproxy)
+{
+	ssize_t buffsz = sizeof(char)*400;
+	char buff[buffsz];
+	struct uri_data uri_data;
+	ssize_t readsz;
+	int res;
+
+	uri_data.xml_wpipe = xml_wpipe;
+	uri_data.res_wpipe = res_wpipe;
+
+	readsz = read(uri_rpipe, &uri_data.uri_type, sizeof(enum uri_type));
+	if (readsz == 0)
+		exit(0);
+	else if (readsz == -1)
+		fatal("uri_type read failed");
+	switch(uri_data.uri_type) {
+		case URI_TYPE_HASH:
+			readsz = read(uri_rpipe, &uri_data.hash,
+			    HASH_CHAR_LEN);
+			if (readsz == 0)
+				exit(0);
+			else if (readsz == -1)
+				fatal("hash read failed");
+			break;
+		case URI_TYPE_MODIFIED_SINCE:
+			readsz = read(uri_rpipe, &uri_data.modified_since,
+			    TIME_LEN);
+			if (readsz == 0)
+				exit(0);
+			else if (readsz == -1)
+				fatal("modified_since read failed");
+			break;
+		case URI_TYPE_BASIC: /* nothing */
+			break;
+	}
+	readsz = read(uri_rpipe, buff, buffsz);
+	if (readsz == 0)
+		exit(0);
+	else if (readsz == -1)
+		fatal("uri read failed");
+	/* XXXNF allow for longer */
+	else if (readsz == buffsz)
+		fatal("uri read too long %lu, '%s'", strlen(buff), buff);
+
+	if ((uri_data.uri = strndup(buff, readsz)) == NULL)
+		fatal("strndup");
+	warnx("type: %d\nhash: %.*s\ntime: %.*s\nuri: %s", uri_data.uri_type,
+	    uri_data.uri_type == URI_TYPE_HASH ? HASH_CHAR_LEN : 1,
+	    uri_data.uri_type == URI_TYPE_HASH ? uri_data.hash : "-",
+	    uri_data.uri_type == URI_TYPE_MODIFIED_SINCE ? TIME_LEN : 1,
+	    uri_data.uri_type == URI_TYPE_MODIFIED_SINCE ? uri_data.modified_since : "-",
+	    uri_data.uri);
+	res = fetch_xml_uri(&uri_data, httpproxy);
+	write(res_wpipe, &res, sizeof(res));
+	if (uri_data.uri_type == URI_TYPE_MODIFIED_SINCE)
+		write(res_wpipe, uri_data.modified_since, TIME_LEN);
+}
+
+/*
+ * the write side of the url fetch (the only part that would not be called from
+ * within the url_proc
+ */
+int
+fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
+    XML_Parser p) {
+	enum uri_type uri_type;
+	int res;
+	ssize_t readsz;
+	off_t size;
+	int BUFF_SIZE = 1024;
+	char buff[BUFF_SIZE];
+
+	if (uri == NULL)
+		return -1;
+	if (hash != NULL)
+		uri_type = URI_TYPE_HASH;
+	else if (modified_since != NULL) {
+		uri_type = URI_TYPE_MODIFIED_SINCE;
+	} else
+		uri_type = URI_TYPE_BASIC;
+
+	warnx("XXXNF uri: %s\ntype: %d\nhash: %.*s\ntime: %.*s",
+	    uri,
+	    uri_type,
+	    uri_type == URI_TYPE_HASH ? HASH_CHAR_LEN : 1,
+	    uri_type == URI_TYPE_HASH ? hash : "-",
+	    uri_type == URI_TYPE_MODIFIED_SINCE ? TIME_LEN : 1,
+	    uri_type == URI_TYPE_MODIFIED_SINCE ? modified_since : "-");
+
+	if (write(opts->uri_wpipe, &uri_type, sizeof(enum uri_type)) == -1) {
+		log_warn("write fail");
+		return -1;
+	}
+	switch(uri_type) {
+		case URI_TYPE_HASH:
+			if (write(opts->uri_wpipe, hash,
+			    HASH_CHAR_LEN) == -1) {
+				log_warn("write fail");
+				return -1;
+			}
+			break;
+		case URI_TYPE_MODIFIED_SINCE:
+			if (write(opts->uri_wpipe, modified_since,
+			    TIME_LEN) == -1) {
+				log_warn("write fail");
+				return -1;
+			}
+			break;
+		case URI_TYPE_BASIC: /* nothing */
+			break;
+	}
+	if (write(opts->uri_wpipe, uri, strlen(uri) + 1) == -1) {
+		log_warn("write fail");
+		return -1;
+	}
+	/* content length */
+	/* XXXNF on redirect this plan fails since we get multiple headers */
+	readsz = read(opts->res_rpipe, &size, sizeof(off_t));
+	if (readsz == -1)
+		fatal("read");
+	while (size != 0) {
+		if ((readsz = read(opts->xml_rpipe, buff, BUFF_SIZE)) == -1)
+			fatal("read");
+		if (!XML_Parse(p, buff, readsz, 0)) {
+			fprintf(stderr, "Parse error at line %lu:\n%s\n",
+				XML_GetCurrentLineNumber(p),
+				XML_ErrorString(XML_GetErrorCode(p)));
+			fatal("notification parse error");
+		}
+		size -= readsz;
+	}
+
+	/* http result code */
+	readsz = read(opts->res_rpipe, &res, sizeof(int));
+	if (readsz <= 0) {
+		fatal("read res fail");
+	}
+
+	/* optional updated modified since time */
+	if (uri_type == URI_TYPE_MODIFIED_SINCE) {
+	    readsz = read(opts->res_rpipe, modified_since, TIME_LEN);
+	    if (readsz == -1)
+		fatal("read res fail");
+	}
+	return res;
 }
 

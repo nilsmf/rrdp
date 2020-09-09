@@ -19,12 +19,14 @@
 struct opts {
 	char *basedir_primary;
 	char *basedir_working;
-	char *httpproxy;
 	int primary_dir;
 	int working_dir;
 	int delta_limit;
 	int ignore_withdraw;
 	int verbose;
+	int uri_wpipe;
+	int xml_rpipe;
+	int res_rpipe;
 };
 
 int	b64_decode(char *, unsigned char **);
@@ -44,6 +46,7 @@ int mv_delta(char *, char *, int);
 /* fetch_util */ 
 #define TIME_FORMAT "%a, %d %b %Y %T GMT"
 #define TIME_LEN 30
+#define HASH_CHAR_LEN (SHA256_DIGEST_LENGTH * 2)
 
 /* save everyone doing this code over and over */
 #define PARSE_FAIL(p, ...) do {		\
@@ -52,17 +55,31 @@ int mv_delta(char *, char *, int);
 	return;				\
 } while(0)
 
+enum uri_type {
+	URI_TYPE_BASIC,
+	URI_TYPE_HASH,
+	URI_TYPE_MODIFIED_SINCE
+};
+
+struct uri_data {
+	enum uri_type uri_type;
+	char hash[HASH_CHAR_LEN];
+	char modified_since[TIME_LEN];
+	char *uri;
+	int xml_wpipe;
+	int res_wpipe;
+	SHA256_CTX ctx;
+};
+
 struct xmldata {
 	struct opts *opts;
-	char *uri;
-	char *hash;
-	char modified_since[TIME_LEN];
-	SHA256_CTX ctx;
 	XML_Parser parser;
+	char modified_since[TIME_LEN];
 	void *xml_data;
 };
 
-long fetch_xml_uri(struct xmldata *);
+int fetch_uri_data(char *, char *, char *, struct opts *, XML_Parser);
+void read_uri(int, int, int, char *);
 
 /* notification */
 #define STATE_FILENAME ".state"

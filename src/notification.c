@@ -400,7 +400,7 @@ save_notification_data(struct xmldata *xml_data)
 	 * TODO maybe this should actually come from the snapshot/deltas that
 	 * get written might not matter if we have verified consistency already
 	 */
-	fprintf(f, "%s\n%d\n%s\n", nxml->session_id, nxml->serial,
+	fprintf(f, "%s\n%d\n%.*s\n", nxml->session_id, nxml->serial, TIME_LEN,
 	    xml_data->modified_since);
 	fclose(f);
 }
@@ -446,13 +446,16 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 				strncpy(xml_data->modified_since, line,
 				    TIME_LEN);
 			} else {
+				memset(xml_data->modified_since, '\0',
+				    TIME_LEN);
 				log_warnx("bad time in notification file: '%s'",
 				    line);
 			}
 		}
 		l++;
 	}
-	log_debug("current session: %s\ncurrent serial: %d\nmodified since: %s",
+	log_debug("current session: %s\ncurrent serial: %d\nmodified since:"
+	    " %s\n",
 	    nxml->current_session_id ?: "NULL", nxml->current_serial,
 	    xml_data->modified_since);
 	fclose(f);
@@ -467,12 +470,9 @@ new_notification_xml_data(char *uri, struct opts *opts)
 		fatal("%s - calloc", __func__);
 	xml_data->xml_data = new_notification_xml();
 
-	xml_data->uri = uri;
 	xml_data->opts = opts;
 	/* no hash verification for notification file */
-	xml_data->hash = NULL;
 	/* set modified since to empty string for safety */
-	xml_data->modified_since[0] = '\0';
 	fetch_existing_notification_data(xml_data);
 
 	xml_data->parser = XML_ParserCreate(NULL);
