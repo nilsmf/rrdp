@@ -138,8 +138,15 @@ static size_t
 write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	struct uri_data *uri_data = userdata;
+	long chunk_length = nmemb;
 	if (uri_data->uri_type == URI_TYPE_HASH)
 		SHA256_Update(&uri_data->ctx, (const u_int8_t *)ptr, nmemb);
+
+	/* write content length to res_pipe */
+	if (write(uri_data->res_wpipe, &chunk_length, sizeof(long)) == -1) {
+		warnx("write");
+		return 0;
+	}
 	write(uri_data->xml_wpipe, ptr, nmemb);
 	return nmemb;
 }
@@ -567,11 +574,12 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 
 	char *httpsport = "443";
 	char *httpport = "80";
-	off_t filesize;
+	off_t filesize = -1;
 	int family = PF_UNSPEC;
 	char *httpuseragent = "User-Agent: " USER_AGENT;
 	off_t bytes;
 	struct tls_config *tls_config = NULL;
+	long final = -1;
 
 	newline = xstrdup(origline);
 	if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) != 0) {
@@ -885,7 +893,6 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 	 * Read the rest of the header.
 	 */
 	free(buf);
-	filesize = -1;
 
 	for (;;) {
 		if ((buf = ftp_readline(fin, &len)) == NULL) {
@@ -909,11 +916,6 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 			filesize = strtonum(cp, 0, LLONG_MAX, &errstr);
 			if (errstr != NULL)
 				goto improper;
-			/* XXXNF if something goes wrong we may not write
-			 * this... */
-			if (write(data->res_wpipe, &filesize, sizeof(off_t))
-			    == -1)
-				fatal("write");
 #define LOCATION "Location: "
 		} else if (isredirect &&
 		    strncasecmp(cp, LOCATION, sizeof(LOCATION) - 1) == 0) {
@@ -1053,7 +1055,7 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 		}
 	}
 	if (filesize != -1 && len == 0 && bytes != filesize) {
-		log_info("Read short file.\n");
+		log_info("Read short file.");
 		goto cleanup_url_get;
 	}
 
@@ -1064,6 +1066,10 @@ improper:
 	warnx("Improper response from %s", host);
 
 cleanup_url_get:
+	/* send that we have no more bytes to read */
+	if (write(data->res_wpipe, &final, sizeof(long)) == -1) {
+		warnx("write");
+	}
 	free(full_host);
 	free(sslhost);
 	ftp_close(&fin, &tls, &fd);
@@ -1254,22 +1260,25 @@ fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
 		log_warn("write fail");
 		return -1;
 	}
-	/* content length */
-	/* XXXNF on redirect this plan fails since we get multiple headers */
-	readsz = read(opts->res_rpipe, &size, sizeof(off_t));
+	/* chunk length on res_pipe and content on xml_pipe */
+	while((readsz = read(opts->res_rpipe, &size, sizeof(off_t))) != -1 &&
+	    size != -1) {
+		while (size > 0) {
+			if ((readsz = read(opts->xml_rpipe, buff,
+			    BUFF_SIZE)) == -1)
+				fatal("read");
+			if (!XML_Parse(p, buff, readsz, 0)) {
+				fprintf(stderr,
+				    "Parse error at line %lu:\n%s\n",
+					XML_GetCurrentLineNumber(p),
+					XML_ErrorString(XML_GetErrorCode(p)));
+				fatal("notification parse error");
+			}
+			size -= readsz;
+		}
+	}
 	if (readsz == -1)
 		fatal("read");
-	while (size != 0) {
-		if ((readsz = read(opts->xml_rpipe, buff, BUFF_SIZE)) == -1)
-			fatal("read");
-		if (!XML_Parse(p, buff, readsz, 0)) {
-			fprintf(stderr, "Parse error at line %lu:\n%s\n",
-				XML_GetCurrentLineNumber(p),
-				XML_ErrorString(XML_GetErrorCode(p)));
-			fatal("notification parse error");
-		}
-		size -= readsz;
-	}
 
 	/* http result code */
 	readsz = read(opts->res_rpipe, &res, sizeof(int));

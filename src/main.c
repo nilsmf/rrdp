@@ -192,10 +192,12 @@ main(int argc, char **argv)
 	char *basedir;
 	struct stat st;
 	int opt, procpid;
-	int uri_pipe[2]; /* send uri_data to be fetched */
-	int xml_pipe[2]; /* send xml that was fetched from uri */
-	int res_pipe[2]; /* send return type of fetch */
+	int uri_pipe[2]; /* send uri_type, uri, hash/time to be fetched */
+	int xml_pipe[2]; /* send xml content that was fetched from uri */
+	int res_pipe[2]; /* send content-length, http code, time of fetch */
 	char *httpproxy;
+	int status;
+
 	opts.delta_limit = 0;
 	opts.ignore_withdraw = 0;
 	opts.verbose = 0;
@@ -242,23 +244,23 @@ main(int argc, char **argv)
 		fatal("failed to open dir: %s", basedir);
 	make_workdir(basedir, &opts);
 
-	if(pipe(uri_pipe) != 0)
+	if (pipe(uri_pipe) != 0)
 		fatal("pipe");
-	if(pipe(xml_pipe) != 0)
+	if (pipe(xml_pipe) != 0)
 		fatal("pipe");
-	if(pipe(res_pipe) != 0)
+	if (pipe(res_pipe) != 0)
 		fatal("pipe");
 
 	/* split off fetch caller */
-	if((procpid = fork()) == -1)
+	if ((procpid = fork()) == -1)
 		fatal("fork");
 
-	if(procpid == 0) {
+	if (procpid == 0) {
 		if (unveil("/etc/ssl/", "r") == -1)
 			fatal("%s: unveil", "/etc/ssl/");
 		if (unveil(NULL, NULL) == -1)
 			fatal("unveil");
-		if (pledge("dns inet stdio rpath wpath", NULL) == -1)
+		if (pledge("dns inet stdio rpath", NULL) == -1)
 			fatal("pledge");
 		if ((httpproxy = getenv(HTTP_PROXY)) != NULL &&
 		    httpproxy == '\0')
@@ -271,10 +273,10 @@ main(int argc, char **argv)
 	}
 
 	/* split off xml processing */
-	if((procpid = fork()) == -1)
+	if ((procpid = fork()) == -1)
 		fatal("fork");
 
-	if(procpid == 0) {
+	if (procpid == 0) {
 		if (unveil(basedir, "crw") == -1)
 			fatal("%s: unveil", basedir);
 		if (unveil(opts.basedir_working, "crw") == -1)
@@ -291,7 +293,6 @@ main(int argc, char **argv)
 		opts.res_rpipe = res_pipe[0];
 		proc_xml_process(uri, &opts);
 	}
-	int status;
 	waitpid(procpid, &status, 0);
 
 	close(opts.primary_dir);
