@@ -175,7 +175,7 @@ rsync_uri_parse(const char **hostp, size_t *hostsz,
 	return 1;
 }
 
-static const char *
+const char *
 fetch_filename_from_uri(const char *uri, const char *proto)
 {
 	const char *module;
@@ -205,7 +205,7 @@ open_uri(char *uri, char *dir_name, int dir, int write)
 	filename = fetch_filename_from_uri(uri, NULL);
 	if (write) {
 		if ((path_delim = strrchr(filename, '/'))) {
-			/* XXX NF better way to do this directory sep? */
+			/* XXXNF better way to do this directory sep? */
 			path_delim[0] = '\0';
 			if (mkpath_at(dir, filename) != 0) {
 				path_delim[0] = '/';

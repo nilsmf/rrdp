@@ -32,16 +32,32 @@ struct opts {
 int	b64_decode(char *, unsigned char **);
 char 	*xstrdup(const char *);
 
-FILE 	*open_primary_uri_read(char *, struct opts *);
-FILE 	*open_working_uri_read(char *, struct opts *);
-FILE 	*open_working_uri_write(char *, struct opts *);
-void	make_workdir(const char *, struct opts *);
-void	free_workdir(struct opts *);
+FILE 		*open_primary_uri_read(char *, struct opts *);
+FILE 		*open_working_uri_read(char *, struct opts *);
+FILE 		*open_working_uri_write(char *, struct opts *);
+void		 make_workdir(const char *, struct opts *);
+void		 free_workdir(struct opts *);
+const char	*fetch_filename_from_uri(const char *, const char *);
 
 /* file_util */
+enum action {
+	ACTION_COPY,
+	ACTION_DELETE
+};
+
+struct file_delta {
+	char *filename;
+	enum action action;
+	SLIST_ENTRY(file_delta) file_list;
+};
+
+SLIST_HEAD(file_list, file_delta);
+
 int mkpath_at(int, const char *);
 int rm_dir(char *, int);
-int mv_delta(char *, char *, int);
+int mv_delta(int, int, struct file_list *);
+int empty_file_list(struct file_list *);
+void add_to_file_list(struct file_list *, const char *, int, int);
 
 /* fetch_util */ 
 #define TIME_FORMAT "%a, %d %b %Y %T GMT"
@@ -136,10 +152,12 @@ void		free_xml_data(struct xmldata *);
 void		save_notification_data(struct xmldata *);
 
 /* snapshot */
-int fetch_snapshot_xml(char *, char *, struct opts *, struct notification_xml*);
+int fetch_snapshot_xml(char *, char *, struct opts *, struct notification_xml *,
+    struct file_list *);
 
 /* delta */
-int fetch_delta_xml(char *, char *, struct opts *, struct notification_xml*);
+int fetch_delta_xml(char *, char *, struct opts *, struct notification_xml *,
+    struct file_list *);
 
 #endif /* _RRDPH_ */
 

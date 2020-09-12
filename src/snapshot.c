@@ -43,6 +43,7 @@ struct snapshot_xml {
 	char			*publish_data;
 	unsigned int		publish_data_length;
 	struct notification_xml	*nxml;
+	struct file_list	*file_list;
 };
 
 static void
@@ -99,6 +100,7 @@ write_snapshot_publish(struct xmldata *xml_data)
 	FILE *f;
 	unsigned char *data_decoded;
 	int decoded_len;
+	const char *filename;
 
 	f = open_working_uri_write(snapshot_xml->publish_uri, xml_data->opts);
 	if (f == NULL)
@@ -110,6 +112,10 @@ write_snapshot_publish(struct xmldata *xml_data)
 		free(data_decoded);
 	}
 	fclose(f);
+
+	filename = fetch_filename_from_uri(snapshot_xml->publish_uri,
+	    "rsync://");
+	add_to_file_list(snapshot_xml->file_list, filename, 0, 0);
 }
 
 static void
@@ -285,7 +291,8 @@ snapshot_content_handler(void *data, const char *content, int length)
 
 static void
 setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
-    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
+    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml,
+    struct file_list *file_list)
 {
 	xml_data->opts = opts;
 
@@ -301,17 +308,19 @@ setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
 	zero_snapshot_global_data(snapshot_xml);
 	zero_snapshot_publish_data(snapshot_xml);
 	snapshot_xml->nxml = nxml;
+	snapshot_xml->file_list = file_list;
 }
 
 int
 fetch_snapshot_xml(char *uri, char *hash, struct opts *opts,
-    struct notification_xml* nxml)
+    struct notification_xml* nxml, struct file_list *file_list)
 {
 	struct xmldata xml_data;
 	struct snapshot_xml snapshot_xml;
 	int ret = 0;
 
-	setup_xml_data(&xml_data, &snapshot_xml, uri, hash, opts, nxml);
+	setup_xml_data(&xml_data, &snapshot_xml, uri, hash, opts, nxml,
+	    file_list);
 	ret = fetch_uri_data(uri, hash, NULL, opts, xml_data.parser);
 	if (ret != 200)
 		ret = 1;

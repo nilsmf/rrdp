@@ -58,6 +58,9 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 	int num_deltas = 0;
 	int expected_deltas = 0;
 	struct delta_item *d;
+	struct file_list file_list;
+
+	SLIST_INIT(&file_list);
 
 	switch (nxml->state) {
 	case NOTIFICATION_STATE_ERROR:
@@ -82,7 +85,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			if (num_deltas < opts->delta_limit ||
 			    !opts->delta_limit) {
 				if (fetch_delta_xml(d->uri, d->hash,
-				    opts, nxml) == 200)
+				    opts, nxml, &file_list) == 200)
 					num_deltas++;
 				else {
 					log_warnx("failed to fetch delta %s",
@@ -102,8 +105,10 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		 * fetch/apply deltas then fallthrough to snapshot
 		 */
 		if (num_deltas == expected_deltas) {
-			if (mv_delta(opts->basedir_working,
-			    opts->basedir_primary, opts->primary_dir) == 0) {
+			if (mv_delta(opts->working_dir,
+			    opts->primary_dir, &file_list) == 0) {
+				empty_file_list(&file_list);
+				rm_working_dir(opts, 1);
 				log_debuginfo("delta migrate passed");
 				break;
 			} else
@@ -112,6 +117,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 			log_warnx("not all deltas processed: %d/%d", num_deltas,
 			    expected_deltas);
 		/* Clean up the snapshot delta dir and make a new one */
+		empty_file_list(&file_list);
 		rm_working_dir(opts, 1);
 		log_warnx("deltas failed going to snapshot");
 		/* FALLTHROUGH */
@@ -119,7 +125,7 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		log_debuginfo("fetching snapshot");
 		/* XXXCJ check that uri points to same host */
 		if (fetch_snapshot_xml(nxml->snapshot_uri,
-		    nxml->snapshot_hash, opts, nxml) != 200) {
+		    nxml->snapshot_hash, opts, nxml, &file_list) != 200) {
 			rm_working_dir(opts, 0);
 			fatalx("failed to run snapshot");
 		}
@@ -128,12 +134,14 @@ process_notification_xml(struct xmldata *xml_data, struct opts *opts)
 		 * primary dir left :s
 		 */
 		rm_primary_dir(opts);
-		if (mv_delta(opts->basedir_working,
-		    opts->basedir_primary, opts->primary_dir) != 0) {
+		if (mv_delta(opts->working_dir,
+		    opts->primary_dir, &file_list) != 0) {
 			rm_primary_dir(opts);
 			rm_working_dir(opts, 0);
 			fatal("failed to update");
 		}
+		empty_file_list(&file_list);
+		rm_working_dir(opts, 0);
 		log_debuginfo("snapshot move success");
 	}
 	save_notification_data(xml_data);

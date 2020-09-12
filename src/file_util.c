@@ -113,87 +113,75 @@ rm_dir(char *dir, int min_del_level)
 	return 0;
 }
 
-/* XXXNF this also deletes the directory being copied */
 int
-mv_delta(char *from, char *to, int to_fd)
+mv_delta(int from_fd, int to_fd, struct file_list *file_list)
 {
-	FTSENT *node;
-	FTS *tree;
-	char *vals[] = {from, NULL};
-	char *newpath;
-	char *newpath_at;
-	int from_len;
+	struct file_delta *file_delta;
+	char *f;
+	char *sep;
 
-	if (!from || !to)
-		return 1;
-	from_len = strlen(from);
-
-	tree = fts_open(vals, FTS_NOCHDIR|FTS_PHYSICAL, 0);
-	if (!tree) {
-		log_warnx("failed to open tree");
-		return 1;
-	}
-	log_debuginfo("migrating %s -> %s", from, to);
-
-	while ((node = fts_read(tree))) {
-		/* replace "from" with "to" */
-		newpath_at = node->fts_path + from_len;
-		if (asprintf(&newpath, "%s%s", to, newpath_at) == -1)
-			err(1, "asprintf");
-
-		/* create dirs in "to" as we discover them */
-		if (node->fts_info & FTS_D) {
-			if (mkpath_at(to_fd, newpath_at) != 0) {
-				log_warn("failed to create %s", newpath_at);
-				free(newpath);
-				return 1;
+	SLIST_FOREACH(file_delta, file_list, file_list) {
+		f = file_delta->filename;
+		if (file_delta->action == ACTION_DELETE) {
+			if (unlinkat(from_fd, f, 0) == -1) {
+				log_warn("failed to delete %s", f);
 			}
-			free(newpath);
-			continue;
-		}
-		/* clear "from" directories as leave them */
-		if (node->fts_info & FTS_DP) {
-			if (rmdir(node->fts_path)) {
-				log_warn("failed to delete %s",
-				    node->fts_path);
-				free(newpath);
-				return 1;
-			}
-			free(newpath);
-			continue;
-		}
-		/* TODO probably unlink anything we dont want to copy? */
-		if (!(node->fts_info & FTS_F) ||
-		    !(node->fts_info & (FTS_NS|FTS_NSOK))) {
-			free(newpath);
-			continue;
-		}
-		/* zero sized files are delta "withdraws" */
-		if (node->fts_statp->st_size == 0) {
-			if (unlink(node->fts_path)) {
-				log_warn("failed to delete %s", node->fts_path);
-				free(newpath);
-				return 1;
-			}
-			if (unlink(newpath) == -1) {
+			/* we allow file not existing on removal of original */
+			if (unlinkat(to_fd, f, 0) == -1) {
 				if (errno != ENOENT) {
-					log_warn("failed to delete %s", newpath);
-					free(newpath);
+					log_warn("failed to delete %s", f);
 					return 1;
 				}
 			}
-			/* XXXNF check and delete newpath file as well */
-		/* otherwise move the file to the new location */
 		} else {
-			if (rename(node->fts_path, newpath)) {
-				log_warn("failed to move %s to %s",
-				    node->fts_path, newpath);
-				free(newpath);
+			if ((sep = strrchr(f, '/')) != NULL)
+				sep[0] = '\0';
+			if (mkpath_at(to_fd, f) != 0)
 				return 1;
-			}
+			if (sep != NULL)
+				sep[0] = '/';
+			if (renameat(from_fd, f, to_fd, f) == -1)
+				log_warn("failed to move %s", f);
 		}
-		free(newpath);
 	}
 	return 0;
 }
 
+void
+add_to_file_list(struct file_list *file_list, const char *filename, int withdraw,
+    int check_duplicates) {
+	struct file_delta *file_delta;
+
+	if (check_duplicates == 1) {
+		log_debug("Refound same file %s", filename);
+		SLIST_FOREACH(file_delta, file_list, file_list) {
+			if (strcmp(filename, file_delta->filename) == 0) {
+				if (withdraw == 0)
+					file_delta->action = ACTION_COPY;
+				else
+					file_delta->action = ACTION_DELETE;
+				return;
+			}
+		}
+	} else {
+		if ((file_delta = calloc(1, sizeof(struct file_delta))) == NULL)
+			fatal("%s - calloc", __func__);
+		file_delta->filename = xstrdup(filename);
+		if (withdraw == 0)
+			file_delta->action = ACTION_COPY;
+		else
+			file_delta->action = ACTION_DELETE;
+		SLIST_INSERT_HEAD(file_list, file_delta, file_list);
+	}
+}
+
+int
+empty_file_list(struct file_list *file_list) {
+	struct file_delta *file_delta;
+	while (!SLIST_EMPTY(file_list)) {
+		file_delta = SLIST_FIRST(file_list);
+		SLIST_REMOVE_HEAD(file_list, file_list);
+		free(file_delta->filename);
+		free(file_delta);
+	}
+}

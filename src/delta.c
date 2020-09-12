@@ -44,7 +44,9 @@ struct delta_xml {
 	char			*publish_hash;
 	char			*publish_data;
 	unsigned int		publish_data_length;
+	int			published_already;
 	struct notification_xml	*nxml;
+	struct file_list	*file_list;
 };
 
 static void
@@ -74,6 +76,7 @@ zero_delta_publish_data(struct delta_xml *delta_xml)
 	delta_xml->publish_hash = NULL;
 	delta_xml->publish_data = NULL;
 	delta_xml->publish_data_length = 0;
+	delta_xml->published_already = 0;
 }
 
 static void
@@ -161,6 +164,8 @@ verify_publish(struct xmldata *xml_data)
 	/* Check the primary dir if we haven't seen the file this delta run */
 	if (v_return == VALIDATE_RETURN_NO_FILE) {
 		v_return = validate_publish_hash(delta_xml, xml_data->opts, 1);
+	} else {
+		delta_xml->published_already = 1;
 	}
 	/* delta expects file to exist and match */
 	if (delta_xml->publish_hash) {
@@ -182,23 +187,26 @@ write_delta(struct xmldata *xml_data, int withdraw)
 	FILE *f;
 	unsigned char *data_decoded;
 	int decoded_len;
+	const char *filename;
 
 	if (withdraw && xml_data->opts->ignore_withdraw)
 		return;
 	f = open_working_uri_write(delta_xml->publish_uri, xml_data->opts);
 	if (f == NULL)
 		fatal("%s - file open fail", __func__);
-	if (withdraw) {
-		fclose(f);
-		return;
-	}
-	/* decode b64 message */
-	decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
-	if (decoded_len > 0) {
-		fwrite(data_decoded, 1, decoded_len, f);
-		free(data_decoded);
+	if (withdraw == 0) {
+		/* decode b64 message */
+		decoded_len = b64_decode(delta_xml->publish_data, &data_decoded);
+		if (decoded_len > 0) {
+			fwrite(data_decoded, 1, decoded_len, f);
+			free(data_decoded);
+		}
 	}
 	fclose(f);
+
+	filename = fetch_filename_from_uri(delta_xml->publish_uri, "rsync://");
+	add_to_file_list(delta_xml->file_list, filename, withdraw,
+	    delta_xml->published_already);
 }
 
 static void
@@ -390,7 +398,8 @@ delta_content_handler(void *data, const char *content, int length)
 
 static void
 setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
-    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml)
+    char *uri, char *hash, struct opts *opts, struct notification_xml *nxml,
+    struct file_list *file_list)
 {
 	xml_data->opts = opts;
 
@@ -406,16 +415,17 @@ setup_xml_data(struct xmldata *xml_data, struct delta_xml *delta_xml,
 	zero_delta_global_data(delta_xml);
 	zero_delta_publish_data(delta_xml);
 	delta_xml->nxml = nxml;
+	delta_xml->file_list = file_list;
 }
 
 int
 fetch_delta_xml(char *uri, char *hash, struct opts *opts,
-    struct notification_xml* nxml)
+    struct notification_xml* nxml, struct file_list *file_list)
 {
 	struct xmldata xml_data;
 	struct delta_xml delta_xml;
 	int ret = 0;
-	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml);
+	setup_xml_data(&xml_data, &delta_xml, uri, hash, opts, nxml, file_list);
 	ret = fetch_uri_data(uri, hash, NULL, opts, xml_data.parser);
 	free_delta_xml_data(&xml_data);
 	return ret;
