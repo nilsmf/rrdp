@@ -24,6 +24,7 @@ struct opts {
 	int delta_limit;
 	int ignore_withdraw;
 	int verbose;
+	int socket;
 	int uri_wpipe;
 	int xml_rpipe;
 	int res_rpipe;
@@ -96,6 +97,8 @@ struct xmldata {
 
 int fetch_uri_data(char *, char *, char *, struct opts *, XML_Parser);
 void read_uri(int, int, int, char *);
+void receive_fds(int, int *);
+void send_fds(int, int *);
 
 /* notification */
 #define STATE_FILENAME ".state"

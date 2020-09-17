@@ -96,6 +96,56 @@ struct header_data {
 	char last_modified[TIME_LEN];
 };
 
+void
+send_fds(int socket, int *fds) {
+	int *msg_data;
+	struct msghdr msg = { 0 };
+	char buf[CMSG_SPACE(sizeof(*fds)*3)];
+	memset(buf, '\0', sizeof(buf));
+	struct iovec io = { .iov_base = "\0", .iov_len = 1 };
+
+	msg.msg_iov = &io;
+	msg.msg_iovlen = 1;
+	msg.msg_control = buf;
+	msg.msg_controllen = sizeof(buf);
+
+	struct cmsghdr * cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(*fds)*3);
+
+	msg_data = (int *) CMSG_DATA(cmsg);
+	memcpy(msg_data, fds, 3 * sizeof(*fds));
+
+	msg.msg_controllen = cmsg->cmsg_len;
+
+	if (sendmsg(socket, &msg, 0) < 0)
+		fatal("Failed to send message\n");
+}
+
+void
+receive_fds(int socket, int *fds) {
+	struct msghdr msg = {0};
+
+	char m_buffer[256];
+	struct iovec io = { .iov_base = m_buffer, .iov_len = sizeof(m_buffer) };
+	msg.msg_iov = &io;
+	msg.msg_iovlen = 1;
+
+	char c_buffer[256];
+	msg.msg_control = c_buffer;
+	msg.msg_controllen = sizeof(c_buffer);
+
+	if (recvmsg(socket, &msg, 0) < 0)
+		fatal("Failed to receive message\n");
+
+	struct cmsghdr * cmsg = CMSG_FIRSTHDR(&msg);
+
+	unsigned char * data = CMSG_DATA(cmsg);
+
+	memcpy(fds, data, sizeof(*fds)*3);
+}
+
 static void
 get_value_from_header(char *buff, size_t buff_len, char *value, size_t val_len)
 {
@@ -138,15 +188,9 @@ static size_t
 write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	struct uri_data *uri_data = userdata;
-	long chunk_length = nmemb;
 	if (uri_data->uri_type == URI_TYPE_HASH)
 		SHA256_Update(&uri_data->ctx, (const u_int8_t *)ptr, nmemb);
 
-	/* write content length to res_pipe */
-	if (write(uri_data->res_wpipe, &chunk_length, sizeof(long)) == -1) {
-		warnx("write");
-		return 0;
-	}
 	write(uri_data->xml_wpipe, ptr, nmemb);
 	return nmemb;
 }
@@ -478,7 +522,7 @@ proxy_connect(int socket, char *host, char *cookie)
 }
 
 static int
-save_chunked(FILE *fin, struct tls *tls, int out, char *buf, size_t buflen,
+save_chunked(FILE *fin, struct tls *tls, char *buf, size_t buflen,
     off_t *bytes, struct uri_data *data)
 {
 	char			*header, *end, *cp;
@@ -555,7 +599,7 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 	struct addrinfo hints, *res0, *res;
 	char *proxyurl = NULL;
 	char *credentials = NULL, *proxy_credentials = NULL;
-	int fd = -1, out = -1;
+	int fd = -1;
 	volatile sig_t oldintr, oldinti;
 	FILE *fin = NULL;
 	const char *errstr;
@@ -579,7 +623,6 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 	char *httpuseragent = "User-Agent: " USER_AGENT;
 	off_t bytes;
 	struct tls_config *tls_config = NULL;
-	long final = -1;
 
 	newline = xstrdup(origline);
 	if (strncasecmp(newline, HTTPS_URL, sizeof(HTTPS_URL) - 1) != 0) {
@@ -1009,9 +1052,6 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 		goto cleanup_url_get;
 	}
 
-	/* Open the output file.  */
-	out = fileno(stdout);
-
 	free(buf);
 	if ((buf = malloc(buflen)) == NULL)
 		fatal("Can't allocate memory for transfer buffer");
@@ -1032,7 +1072,7 @@ url_get(const char *origline, const char *proxyenv, struct uri_data *data,
 
 	/* Finally, suck down the file. */
 	if (chunked) {
-		error = save_chunked(fin, tls, out, buf, buflen, &bytes, data);
+		error = save_chunked(fin, tls, buf, buflen, &bytes, data);
 		signal(SIGINT, oldintr);
 		signal(SIGINFO, oldinti);
 		if (error == -1)
@@ -1066,15 +1106,9 @@ improper:
 	warnx("Improper response from %s", host);
 
 cleanup_url_get:
-	/* send that we have no more bytes to read */
-	if (write(data->res_wpipe, &final, sizeof(long)) == -1) {
-		warnx("write");
-	}
 	free(full_host);
 	free(sslhost);
 	ftp_close(&fin, &tls, &fd);
-	if (out >= 0 && out != fileno(stdout))
-		close(out);
 	free(buf);
 	free(proxyhost);
 	free(proxyurl);
@@ -1181,6 +1215,7 @@ read_uri(int uri_rpipe, int xml_wpipe, int res_wpipe, char *httpproxy)
 			break;
 	}
 	readsz = read(uri_rpipe, buff, buffsz);
+	close(uri_rpipe);
 	if (readsz == 0)
 		exit(0);
 	else if (readsz == -1)
@@ -1191,16 +1226,13 @@ read_uri(int uri_rpipe, int xml_wpipe, int res_wpipe, char *httpproxy)
 
 	if ((uri_data.uri = strndup(buff, readsz)) == NULL)
 		fatal("strndup");
-	warnx("type: %d\nhash: %.*s\ntime: %.*s\nuri: %s", uri_data.uri_type,
-	    uri_data.uri_type == URI_TYPE_HASH ? HASH_CHAR_LEN : 1,
-	    uri_data.uri_type == URI_TYPE_HASH ? uri_data.hash : "-",
-	    uri_data.uri_type == URI_TYPE_MODIFIED_SINCE ? TIME_LEN : 1,
-	    uri_data.uri_type == URI_TYPE_MODIFIED_SINCE ? uri_data.modified_since : "-",
-	    uri_data.uri);
+
 	res = fetch_xml_uri(&uri_data, httpproxy);
+	close(xml_wpipe);
 	write(res_wpipe, &res, sizeof(res));
 	if (uri_data.uri_type == URI_TYPE_MODIFIED_SINCE)
 		write(res_wpipe, uri_data.modified_since, TIME_LEN);
+	close(res_wpipe);
 }
 
 /*
@@ -1213,9 +1245,34 @@ fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
 	enum uri_type uri_type;
 	int res;
 	ssize_t readsz;
-	off_t size;
 	int BUFF_SIZE = 1024;
 	char buff[BUFF_SIZE];
+	int uri_pipe[2]; /* send uri_type, uri, hash/time to be fetched */
+	int xml_pipe[2]; /* send xml content that was fetched from uri */
+	int res_pipe[2]; /* send http code, time of fetch */
+	int uri_wpipe;
+	int xml_rpipe;
+	int res_rpipe;
+	int send_pipes[3];
+
+	if (pipe(uri_pipe) != 0)
+		fatal("pipe");
+	if (pipe(xml_pipe) != 0)
+		fatal("pipe");
+	if (pipe(res_pipe) != 0)
+		fatal("pipe");
+
+	uri_wpipe = uri_pipe[1];
+	xml_rpipe = xml_pipe[0];
+	res_rpipe = res_pipe[0];
+	send_pipes[0] = uri_pipe[0];
+	send_pipes[1] = xml_pipe[1];
+	send_pipes[2] = res_pipe[1];
+
+	send_fds(opts->socket, send_pipes);
+	close(send_pipes[0]);
+	close(send_pipes[1]);
+	close(send_pipes[2]);
 
 	if (uri == NULL)
 		return -1;
@@ -1226,28 +1283,20 @@ fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
 	} else
 		uri_type = URI_TYPE_BASIC;
 
-	warnx("XXXNF uri: %s\ntype: %d\nhash: %.*s\ntime: %.*s",
-	    uri,
-	    uri_type,
-	    uri_type == URI_TYPE_HASH ? HASH_CHAR_LEN : 1,
-	    uri_type == URI_TYPE_HASH ? hash : "-",
-	    uri_type == URI_TYPE_MODIFIED_SINCE ? TIME_LEN : 1,
-	    uri_type == URI_TYPE_MODIFIED_SINCE ? modified_since : "-");
-
-	if (write(opts->uri_wpipe, &uri_type, sizeof(enum uri_type)) == -1) {
+	if (write(uri_wpipe, &uri_type, sizeof(enum uri_type)) == -1) {
 		log_warn("write fail");
 		return -1;
 	}
 	switch(uri_type) {
 		case URI_TYPE_HASH:
-			if (write(opts->uri_wpipe, hash,
+			if (write(uri_wpipe, hash,
 			    HASH_CHAR_LEN) == -1) {
 				log_warn("write fail");
 				return -1;
 			}
 			break;
 		case URI_TYPE_MODIFIED_SINCE:
-			if (write(opts->uri_wpipe, modified_since,
+			if (write(uri_wpipe, modified_since,
 			    TIME_LEN) == -1) {
 				log_warn("write fail");
 				return -1;
@@ -1256,42 +1305,42 @@ fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
 		case URI_TYPE_BASIC: /* nothing */
 			break;
 	}
-	if (write(opts->uri_wpipe, uri, strlen(uri) + 1) == -1) {
+	if (write(uri_wpipe, uri, strlen(uri) + 1) == -1) {
 		log_warn("write fail");
 		return -1;
 	}
+	close(uri_wpipe);
 	/* chunk length on res_pipe and content on xml_pipe */
-	while((readsz = read(opts->res_rpipe, &size, sizeof(off_t))) != -1 &&
-	    size != -1) {
-		while (size > 0) {
-			if ((readsz = read(opts->xml_rpipe, buff,
-			    BUFF_SIZE)) == -1)
-				fatal("read");
-			if (!XML_Parse(p, buff, readsz, 0)) {
-				fprintf(stderr,
-				    "Parse error at line %lu:\n%s\n",
-					XML_GetCurrentLineNumber(p),
-					XML_ErrorString(XML_GetErrorCode(p)));
-				fatal("notification parse error");
-			}
-			size -= readsz;
+	while ((readsz = read(xml_rpipe, buff, BUFF_SIZE)) > 0) {
+		if (!XML_Parse(p, buff, readsz, 0)) {
+			fprintf(stderr,
+			    "Parse error at line %lu:\n%s\n",
+				XML_GetCurrentLineNumber(p),
+				XML_ErrorString(XML_GetErrorCode(p)));
+			/* XXXNF non fatal for deltas? */
+			fatal("notification parse error");
 		}
 	}
-	if (readsz == -1)
-		fatal("read");
+	close(xml_rpipe);
+	if (readsz < 0)
+		fatal("read xml fail");
 
 	/* http result code */
-	readsz = read(opts->res_rpipe, &res, sizeof(int));
-	if (readsz <= 0) {
+	readsz = read(res_rpipe, &res, sizeof(int));
+	if (readsz < 0)
 		fatal("read res fail");
-	}
+	else if (readsz == 0)
+		return -1;
 
 	/* optional updated modified since time */
 	if (uri_type == URI_TYPE_MODIFIED_SINCE) {
-	    readsz = read(opts->res_rpipe, modified_since, TIME_LEN);
-	    if (readsz == -1)
-		fatal("read res fail");
+		readsz = read(res_rpipe, modified_since, TIME_LEN);
+		if (readsz < 0)
+			fatal("read res fail");
+		else if (readsz == 0)
+			return -1;
 	}
+	close(res_rpipe);
 	return res;
 }
 

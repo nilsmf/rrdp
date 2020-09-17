@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
 
 #include "log.h"
 #include "rrdp.h"
@@ -184,10 +185,13 @@ proc_xml_process(char *notification_uri, struct opts *opts)
 }
 
 static void
-proc_uri_process(int uri_rpipe, int xml_wpipe, int res_wpipe, char *httpproxy)
+proc_uri_process(int socket, char *httpproxy)
 {
+	int pipes[3];
 	for(;;) {
-		read_uri(uri_rpipe, xml_wpipe, res_wpipe, httpproxy);
+		receive_fds(socket, pipes);
+		/* url_rpipe, xml_wpipe, res_wpipe */
+		read_uri(pipes[0], pipes[1], pipes[2], httpproxy);
 	}
 }
 
@@ -200,9 +204,6 @@ main(int argc, char **argv)
 	char *basedir;
 	struct stat st;
 	int opt, procpid;
-	int uri_pipe[2]; /* send uri_type, uri, hash/time to be fetched */
-	int xml_pipe[2]; /* send xml content that was fetched from uri */
-	int res_pipe[2]; /* send content-length, http code, time of fetch */
 	char *httpproxy;
 	int status;
 
@@ -210,8 +211,8 @@ main(int argc, char **argv)
 	opts.ignore_withdraw = 0;
 	opts.verbose = 0;
 
-	if (pledge("dns inet tty stdio rpath wpath cpath fattr unveil proc",
-	    NULL) == -1)
+	if (pledge("dns inet tty stdio rpath wpath cpath fattr unveil proc"
+	    " sendfd recvfd", NULL) == -1)
 		fatal("pledge");
 	while ((opt = getopt(argc, argv, "d:f:il:v")) != -1) {
 		switch (opt) {
@@ -252,12 +253,11 @@ main(int argc, char **argv)
 		fatal("failed to open dir: %s", basedir);
 	make_workdir(basedir, &opts);
 
-	if (pipe(uri_pipe) != 0)
-		fatal("pipe");
-	if (pipe(xml_pipe) != 0)
-		fatal("pipe");
-	if (pipe(res_pipe) != 0)
-		fatal("pipe");
+	int socket[2];
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket) != 0)
+		fatal("socket");
+	opts.socket = socket[0];
+
 
 	/* split off fetch caller */
 	if ((procpid = fork()) == -1)
@@ -268,16 +268,14 @@ main(int argc, char **argv)
 			fatal("%s: unveil", "/etc/ssl/");
 		if (unveil(NULL, NULL) == -1)
 			fatal("unveil");
-		if (pledge("dns inet stdio rpath", NULL) == -1)
+		if (pledge("dns inet stdio rpath recvfd", NULL) == -1)
 			fatal("pledge");
 		if ((httpproxy = getenv(HTTP_PROXY)) != NULL &&
 		    httpproxy == '\0')
 			httpproxy = NULL;
-		close(uri_pipe[1]);
-		close(xml_pipe[0]);
-		close(res_pipe[0]);
-		proc_uri_process(uri_pipe[0], xml_pipe[1], res_pipe[1],
-		    httpproxy);
+		close(socket[0]);
+		proc_uri_process(socket[1], httpproxy);
+		close(socket[1]);
 	}
 
 	/* split off xml processing */
@@ -291,19 +289,15 @@ main(int argc, char **argv)
 			fatal("%s: unveil", opts.basedir_working);
 		if (unveil(NULL, NULL) == -1)
 			fatal("unveil");
-		if (pledge("stdio rpath wpath cpath fattr", NULL) == -1)
+		if (pledge("stdio rpath wpath cpath fattr sendfd", NULL) == -1)
 			fatal("pledge");
-		close(uri_pipe[0]);
-		close(xml_pipe[1]);
-		close(res_pipe[1]);
-		opts.uri_wpipe = uri_pipe[1];
-		opts.xml_rpipe = xml_pipe[0];
-		opts.res_rpipe = res_pipe[0];
+		close(socket[1]);
 		proc_xml_process(uri, &opts);
+		close(socket[0]);
 	}
-	waitpid(procpid, &status, 0);
 
 	close(opts.primary_dir);
+	waitpid(procpid, &status, 0);
 	free_workdir(&opts);
 	free(basedir);
 }
