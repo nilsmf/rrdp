@@ -276,9 +276,8 @@ http_done(struct http_connection *conn, int ok)
 		err(1, NULL);
 	io_simple_buffer(b, &conn->id, sizeof(conn->id));
 	io_simple_buffer(b, &ok, sizeof(ok));
-#if 0	/* TODO: cache last_modified */
+	io_simple_buffer(b, &conn->status, sizeof(conn->status));
 	io_str_buffer(b, conn->last_modified);
-#endif
 	ibuf_close(&msgq, b);
 }
 
@@ -699,6 +698,7 @@ http_parse_status(struct http_connection *conn, char *buf)
 	case 302:
 	case 303:
 	case 307:
+	case 308:
 		if (conn->redirect_loop++ > 10) {
 			warnx("%s: Too many redirections requested",
 			    http_info(conn->url));
@@ -706,7 +706,6 @@ http_parse_status(struct http_connection *conn, char *buf)
 		}
 		/* FALLTHROUGH */
 	case 200:
-	case 206:
 	case 304:
 		conn->status = status;
 		break;
@@ -723,7 +722,7 @@ static inline int
 http_isredirect(struct http_connection *conn)
 {
 	if ((conn->status >= 301 && conn->status <= 303) ||
-	    conn->status == 307)
+	    conn->status == 307 || conn->status == 308)
 		return 1;
 	return 0;
 }
@@ -1059,7 +1058,10 @@ http_nextstep(struct http_connection *conn)
 		if (conn->status == 200)
 			conn->state = STATE_RESPONSE_DATA;
 		else {
-			http_done(conn, 0);
+			int ok = 0;
+			if (conn->status == 304)
+				ok = 1;
+			http_done(conn, ok);
 			return http_close(conn);
 		}
 		return WANT_POLLIN;

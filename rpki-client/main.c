@@ -1249,8 +1249,15 @@ main(int argc, char *argv[])
 		}
 
 		if ((pfd[2].revents & POLLIN)) {
+			int status;
+			char *last_mod;
+
 			io_simple_read(http, &i, sizeof(i));
 			io_simple_read(http, &ok, sizeof(ok));
+			io_simple_read(http, &status, sizeof(status));
+			io_str_read(http, &last_mod);
+
+			/* XXX this is wrong for RRDP requests */
 			assert(i < rt.reposz);
 
 			assert(!rt.repos[i].loaded);
