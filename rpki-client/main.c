@@ -1148,16 +1148,16 @@ main(int argc, char *argv[])
 	while (entity_queue > 0 && !killme) {
 		pfd[0].events = POLLIN;
 		if (rsyncq.queued)
-			pfd[0].events = POLLOUT;
+			pfd[0].events |= POLLOUT;
 		pfd[1].events = POLLIN;
 		if (procq.queued)
-			pfd[1].events = POLLOUT;
+			pfd[1].events |= POLLOUT;
 		pfd[2].events = POLLIN;
 		if (httpq.queued)
-			pfd[2].events = POLLOUT;
+			pfd[2].events |= POLLOUT;
 		pfd[3].events = POLLIN;
 		if (rrdpq.queued)
-			pfd[3].events = POLLOUT;
+			pfd[3].events |= POLLOUT;
 
 		if ((c = poll(pfd, 4, INFTIM)) == -1) {
 			if (errno == EINTR)
