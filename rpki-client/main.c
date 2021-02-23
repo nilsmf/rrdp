@@ -385,6 +385,17 @@ repo_fetch(struct repo *rp)
 		 */
 		if (rp->repouri == NULL) {
 			http_ta_fetch(rp);
+		} else {
+			enum rrdp_msg msgtype = RRDP_START;
+
+			if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+				err(1, NULL);
+			io_simple_buffer(b, &msgtype, sizeof(msgtype));
+			io_simple_buffer(b, &rp->id, sizeof(rp->id));
+			io_str_buffer(b, rp->local);
+			io_str_buffer(b, rp->uris[rp->uriidx]);
+			io_str_buffer(b, rp->repouri);
+			ibuf_close(&rrdpq, b);
 		}
 	}
 }
@@ -427,7 +438,7 @@ ta_lookup(const struct tal *tal)
  * Look up a repository, queueing it for discovery if not found.
  */
 static const struct repo *
-repo_lookup(const char *uri)
+repo_lookup(const char *uri, const char *notify)
 {
 	char		*local, *repo;
 	struct repo	*rp;
@@ -450,7 +461,11 @@ repo_lookup(const char *uri)
 	local = strchr(repo, ':') + strlen("://");
 	if (asprintf(&rp->local, "rsync/%s", local) == -1)
 		err(1, "asprintf");
-	if ((rp->uris[0] = strdup(repo)) == NULL)
+	i = 0;
+	if (notify)
+		if ((rp->uris[i++] = strdup(notify)) == NULL)
+			err(1, "strdup");
+	if ((rp->uris[i] = strdup(repo)) == NULL)
 		err(1, "strdup");
 
 	repo_fetch(rp);
@@ -636,7 +651,7 @@ queue_add_from_cert(struct entityq *q, const struct cert *cert)
 	const struct repo	*repo;
 	char			*nfile;
 
-	repo = repo_lookup(cert->mft);
+	repo = repo_lookup(cert->mft, cert->notify);
 	if (repo == NULL) /* bad repository URI */
 		return;
 
@@ -861,7 +876,7 @@ suicide(int sig __attribute__((unused)))
 int
 main(int argc, char *argv[])
 {
-	int		 rc = 1, c, st, proc, rsync, http, rrdp,
+	int		 rc = 1, c, st, proc, rsync, http, rrdp, ok,
 			 fl = SOCK_STREAM | SOCK_CLOEXEC;
 	size_t		 i, outsz = 0, talsz = 0;
 	pid_t		 procpid, rsyncpid, httppid, rrdppid;
@@ -1217,8 +1232,7 @@ main(int argc, char *argv[])
 		 */
 
 		if ((pfd[0].revents & POLLIN)) {
-			int ok;
-			io_simple_read(rsync, &i, sizeof(size_t));
+			io_simple_read(rsync, &i, sizeof(i));
 			io_simple_read(rsync, &ok, sizeof(ok));
 			assert(i < rt.reposz);
 
@@ -1235,8 +1249,7 @@ main(int argc, char *argv[])
 		}
 
 		if ((pfd[2].revents & POLLIN)) {
-			int ok;
-			io_simple_read(http, &i, sizeof(size_t));
+			io_simple_read(http, &i, sizeof(i));
 			io_simple_read(http, &ok, sizeof(ok));
 			assert(i < rt.reposz);
 
@@ -1252,6 +1265,25 @@ main(int argc, char *argv[])
 		 * Handle RRDP requests here.
 		 */
 		if ((pfd[3].revents & POLLIN)) {
+			enum rrdp_msg type;
+
+			io_simple_read(rrdp, &type, sizeof(type));
+			io_simple_read(rrdp, &i, sizeof(i));
+			io_simple_read(rrdp, &ok, sizeof(ok));
+			assert(i < rt.reposz);
+
+			assert(!rt.repos[i].loaded);
+			switch (type) {
+			case RRDP_END:
+				if (http_done(&rt.repos[i], ok)) {
+					rt.repos[i].loaded = 1;
+					stats.repos++;
+					entityq_flush(&q, &rt.repos[i]);
+				}
+				break;
+			default:
+				errx(1, "unexpected rrdp response");
+			}
 		}
 
 		/*

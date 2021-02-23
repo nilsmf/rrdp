@@ -265,6 +265,14 @@ enum rtype {
 };
 
 /*
+ * Message types for communication with RRDP process.
+ */
+enum rrdp_msg {
+	RRDP_START,
+	RRDP_END
+};
+
+/*
  * An entity (MFT, ROA, certificate, etc.) that needs to be downloaded
  * and parsed.
  */

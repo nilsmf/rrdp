@@ -34,6 +34,7 @@
 static struct msgbuf	msgq;
 
 struct rrdp_state {
+	size_t		 id;
 	struct pollfd	*pfd;
 	XML_Parser	 parser;
 };
@@ -45,6 +46,21 @@ xstrdup(const char *s)
 	if ((r = strdup(s)) == NULL)
 		err(1, "strdup");
 	return r;
+}
+
+static void
+rrdp_fail(size_t id)
+{
+	enum rrdp_msg type = RRDP_END;
+	struct ibuf *b;
+	int ok = 0;
+
+	if ((b = ibuf_open(sizeof(type) + sizeof(id) + sizeof(ok))) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &id, sizeof(id));
+	io_simple_buffer(b, &ok, sizeof(ok));
+	ibuf_close(&msgq, b);
 }
 
 void
@@ -98,6 +114,29 @@ proc_rrdp(int fd)
 		}
 
 		if (pfds[0].revents & POLLIN) {
+			char		*local, *notifyuri, *repouri;
+			enum rrdp_msg	type;
+			size_t		id;
+			int		outfd;
+
+			outfd = io_recvfd(fd, &type, sizeof(type));
+			io_simple_read(fd, &id, sizeof(id));
+
+			switch (type) {
+			case RRDP_START:
+				io_str_read(fd, &local);
+				io_str_read(fd, &notifyuri);
+				io_str_read(fd, &repouri);
+				if (outfd != -1)
+					errx(1, "received unexpected fd");
+
+				warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
+				    local, notifyuri, repouri);
+				rrdp_fail(id);
+				break;
+			default:
+				errx(1, "unexpected message");
+			}
 		}
 
 		for (i = 0; i < MAX_SESSIONS; i++) {
