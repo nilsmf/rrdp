@@ -52,6 +52,8 @@ proc_rrdp(int fd)
 	msgbuf_init(&msgq);
 	msgq.fd = fd;
 
+	pfds[0].fd = fd;
+
 	for (;;) {
 		pfds[0].events |= POLLIN;
 		if (msgq.queued)
