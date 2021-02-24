@@ -16,6 +16,7 @@
 
 #include <sys/stat.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <limits.h>
@@ -49,7 +50,7 @@ enum notification_state {
 
 struct delta_item {
 	char			*uri;
-	char			*hash;
+	char			 hash[SHA256_DIGEST_LENGTH];
 	long long		 serial;
 	TAILQ_ENTRY(delta_item)	 q;
 };
@@ -61,7 +62,7 @@ struct notification_xml {
 	char			*session_id;
 	char			*current_session_id;
 	char			*snapshot_uri;
-	char			*snapshot_hash;
+	char			 snapshot_hash[SHA256_DIGEST_LENGTH];
 	struct delta_q		delta_q;
 	long long		serial;
 	long long		current_serial;
@@ -71,8 +72,41 @@ struct notification_xml {
 };
 
 static int
-add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
-    long long serial)
+hex_to_bin(const char *hexstr, char *buf, size_t len)
+{
+	unsigned char ch, r;
+	size_t pos = 0;
+	int i;
+
+	while (*hexstr) {
+		r = 0;
+		for (i = 0; i < 2; i++) {
+			ch = hexstr[i];
+			if (isdigit(ch))
+				ch -= '0';
+			else if (islower(ch))
+				ch -= ('a' - 10);
+			else if (isupper(ch))
+				ch -= ('A' - 10);
+			else
+				return -1;
+			if (ch > 0xf)
+				return -1;
+			r = r << 4 | ch;
+		}
+		if (pos < len)
+			buf[pos++] = r;
+		else
+			return -1;
+
+		hexstr += 2;
+	}
+	return 0;
+}
+
+static int
+add_delta(struct notification_xml *nxml, const char *uri,
+    const char hash[SHA256_DIGEST_LENGTH], long long serial)
 {
 	struct delta_item *d, *n;
 
@@ -81,25 +115,25 @@ add_delta(struct notification_xml *nxml, const char *uri, const char *hash,
 
 	d->serial = serial;
 	d->uri = xstrdup(uri);
-	d->hash = xstrdup(hash);
+	memcpy(d->hash, hash, sizeof(d->hash));
 
-	/* XXX this is strange */
 	n = TAILQ_LAST(&nxml->delta_q, delta_q);
-	if (!n || serial < n->serial) {
+	if (n == NULL)
+		TAILQ_INSERT_HEAD(&nxml->delta_q, d, q);
+	else if (n->serial < serial)
+		TAILQ_INSERT_TAIL(&nxml->delta_q, d, q);
+	else
 		TAILQ_FOREACH(n, &nxml->delta_q, q) {
 			if (n->serial == serial) {
 				warnx("duplicate delta serial %lld ", serial);
+				free(d);
 				return 0;
 			}
-			if (n->serial < serial)
+			if (n->serial > serial) {
+				TAILQ_INSERT_BEFORE(n, d, q);
 				break;
+			}
 		}
-	}
-
-	if (n)
-		TAILQ_INSERT_AFTER(&nxml->delta_q, n, d, q);
-	else
-		TAILQ_INSERT_HEAD(&nxml->delta_q, d, q);
 
 	return 1;
 }
@@ -108,7 +142,6 @@ static void
 free_delta(struct delta_item *d)
 {
 	free(d->uri);
-	free(d->hash);
 	free(d);
 }
 
@@ -194,9 +227,7 @@ log_notification_xml(struct notification_xml *nxml)
 	logx("session_id: %s", nxml->session_id ?: "NULL");
 	logx("serial: %lld", nxml->serial);
 	logx("snapshot_uri: %s", nxml->snapshot_uri ?: "NULL");
-	logx("snapshot_hash: %s", nxml->snapshot_hash ?: "NULL");
 }
-
 
 static void
 start_notification_elem(struct notification_xml *nxml, const char **attr)
@@ -257,23 +288,26 @@ static void
 start_snapshot_elem(struct notification_xml *nxml, const char **attr)
 {
 	XML_Parser p = nxml->parser;
-	int i;
+	int i, hasUri = 0, hasHash = 0;
 
 	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
 		PARSE_FAIL(p, "parse failed - entered snapshot "
 		    "elem unexpectedely");
 	}
 	for (i = 0; attr[i]; i += 2) {
-		if (strcmp("uri", attr[i]) == 0)
+		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
 			nxml->snapshot_uri = xstrdup(attr[i+1]);
-		else if (strcmp("hash", attr[i]) == 0)
-			nxml->snapshot_hash = xstrdup(attr[i+1]);
-		else {
-			PARSE_FAIL(p, "parse failed - non conforming "
-			    "attribute found in snapshot elem");
+			continue;
 		}
+		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
+			if (hex_to_bin(attr[i + 1], nxml->snapshot_hash,
+			    sizeof(nxml->snapshot_hash)) == 0)
+				continue;
+		}
+		PARSE_FAIL(p, "parse failed - non conforming "
+		    "attribute found in snapshot elem");
 	}
-	if (!nxml->snapshot_uri || !nxml->snapshot_hash)
+	if (hasUri != 1 || hasHash != 1)
 		PARSE_FAIL(p, "parse failed - incomplete snapshot attributes");
 
 	nxml->scope = NOTIFICATION_SCOPE_SNAPSHOT;
@@ -295,9 +329,9 @@ static void
 start_delta_elem(struct notification_xml *nxml, const char **attr)
 {
 	XML_Parser p = nxml->parser;
-	int i;
+	int i, hasUri = 0, hasHash = 0;
 	const char *delta_uri = NULL;
-	const char *delta_hash = NULL;
+	char delta_hash[SHA256_DIGEST_LENGTH];
 	long long delta_serial = 0;
 
 	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
@@ -305,33 +339,33 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 		    "elem unexpectedely");
 	}
 	for (i = 0; attr[i]; i += 2) {
-		if (strcmp("uri", attr[i]) == 0)
+		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
 			delta_uri = attr[i+1];
-		else if (strcmp("hash", attr[i]) == 0)
-			delta_hash = attr[i+1];
-		else if (strcmp("serial", attr[i]) == 0) {
+			continue;
+		}
+		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
+			if (hex_to_bin(attr[i + 1], delta_hash,
+			    sizeof(delta_hash)) == 0)
+				continue;
+		}
+		if (strcmp("serial", attr[i]) == 0 && delta_serial == 0) {
 			const char *errstr;
 
 			delta_serial = strtonum(attr[i + 1],
 			    1, LLONG_MAX, &errstr);
-			if (errstr != NULL) {
-				PARSE_FAIL(p, "parse failed - non conforming "
-				    "attribute found in notification elem");
-			}
-		} else {
-			PARSE_FAIL(p, "parse failed - non conforming "
-			    "attribute found in snapshot elem");
+			if (errstr == NULL)
+				continue;
 		}
+		PARSE_FAIL(p, "parse failed - non conforming "
+		    "attribute found in snapshot elem");
 	}
 	/* Only add to the list if we are relevant */
-	if (!delta_uri || !delta_hash || !delta_serial)
+	if (hasUri != 1 || hasHash != 1 || delta_serial == 0)
 		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
 
 	if (nxml->current_serial && nxml->current_serial < delta_serial) {
-		if (add_delta(nxml, delta_uri, delta_hash, delta_serial) == 0) {
+		if (add_delta(nxml, delta_uri, delta_hash, delta_serial) == 0)
 			PARSE_FAIL(p, "parse failed - adding delta failed");
-		}
-log_debuginfo("adding delta %lld %s", delta_serial, delta_uri);
 	}
 	nxml->scope = NOTIFICATION_SCOPE_DELTA;
 }
