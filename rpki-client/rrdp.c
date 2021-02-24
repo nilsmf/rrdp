@@ -18,6 +18,7 @@
 #include <sys/queue.h>
 
 #include <err.h>
+#include <limits.h>
 #include <poll.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,19 +26,45 @@
 
 #include <expat.h>
 
+#include <openssl/sha.h>
+
 #include "extern.h"
 #include "rrdp.h"
 
-#define	READ_BUF_SIZE	(32 * 1024)
 #define MAX_SESSIONS	12
+#define	READ_BUF_SIZE	(32 * 1024)
 
 static struct msgbuf	msgq;
 
-struct rrdp_state {
-	size_t		 id;
-	struct pollfd	*pfd;
-	XML_Parser	 parser;
+enum rrdp_state {
+	INIT,
+	REQ,
+	PARSING,
+	GET_NOTIFICATION,
+	GET_DELTA,
+	GET_SNAPSHOT,
 };
+
+struct rrdp {
+	TAILQ_ENTRY(rrdp)	 entry;
+	size_t			 id;
+	char			*last_mod;
+	char			*notifyuri;
+	char			*repouri;
+	char			*localdir;
+
+	struct pollfd		*pfd;
+	int			 infd;
+	enum rrdp_state		 state;
+
+	char			 hash[SHA256_DIGEST_LENGTH];
+	SHA256_CTX		 ctx;
+
+	XML_Parser		 parser;
+	struct notification_xml	*nxml;
+};
+
+TAILQ_HEAD(,rrdp)	states = TAILQ_HEAD_INITIALIZER(states);
 
 char *
 xstrdup(const char *s)
@@ -63,47 +90,122 @@ rrdp_fail(size_t id)
 	ibuf_close(&msgq, b);
 }
 
+static void
+rrdp_fetch(size_t id, const char *uri, const char *last_mod)
+{
+	enum rrdp_msg type = RRDP_HTTP_REQ;
+	struct ibuf *b;
+
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &id, sizeof(id));
+	io_str_buffer(b, uri);
+	io_str_buffer(b, last_mod);
+	ibuf_close(&msgq, b);
+}
+
+static struct rrdp *
+rrdp_new(size_t id, char *local, char *notify, char *repo)
+{
+	struct rrdp *s;
+
+	if ((s = calloc(1, sizeof(*s))) == NULL)
+		err(1, NULL);
+
+	s->infd = -1;
+	s->id = id;
+	s->localdir = local;
+	s->notifyuri = notify;
+	s->repouri = repo;
+
+	s->state = INIT;
+	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
+		err(1, "XML_ParserCreate");
+
+	s->nxml = new_notification_xml(s->parser);
+
+	TAILQ_INSERT_TAIL(&states, s, entry);
+
+	return s;
+}
+
+#if 0
+static void
+rrdp_free(struct rrdp *s)
+{
+	if (s == NULL)
+		return;
+
+	TAILQ_REMOVE(&states, s, entry);
+
+	if (s->infd != -1)
+		close(s->infd);
+	if (s->parser)
+		XML_ParserFree(s->parser);
+	free(s->last_mod);
+	free(s->notifyuri);
+	free(s->repouri);
+	free(s->localdir);
+
+	free(s);
+}
+#endif
+
+static struct rrdp *
+rrdp_get(size_t id)
+{
+	struct rrdp *s;
+
+	TAILQ_FOREACH(s, &states, entry)
+		if (s->id == id)
+			break;
+	return s;
+}
+
 void
 proc_rrdp(int fd)
 {
-	struct rrdp_state state[MAX_SESSIONS];
 	struct pollfd pfds[MAX_SESSIONS + 1];
 	char buf[READ_BUF_SIZE];
+	struct rrdp *s, *ns;
 	size_t i;
 
 	if (pledge("stdio recvfd", NULL) == -1)
 		err(1, "pledge");
 
-	memset(&state, 0, sizeof(state));
 	memset(&pfds, 0, sizeof(pfds));
-
-	for (i = 0; i < MAX_SESSIONS; i++) {
-		pfds[1 + i].fd = -1;
-		state[i].pfd = &pfds[1 + i];
-	}
 
 	msgbuf_init(&msgq);
 	msgq.fd = fd;
 
-	pfds[0].fd = fd;
-
 	for (;;) {
+		i = 1;
+		TAILQ_FOREACH(s, &states, entry) {
+			if (i >= MAX_SESSIONS + 1) {
+				/* not enough sessions, wait for better times */
+				s->pfd = NULL;
+				continue;
+			}
+			if (s->state == INIT) {
+				rrdp_fetch(s->id, s->notifyuri, s->last_mod);
+				s->state = REQ;
+			}
+			s->pfd = pfds + i++;
+			s->pfd->fd = s->infd;
+			s->pfd->events = POLLIN;
+		}
+
+		pfds[0].fd = fd;
 		pfds[0].events = POLLIN;
 		if (msgq.queued)
 			pfds[0].events |= POLLOUT;
 
-		for (i = 0; i < MAX_SESSIONS; i++) {
-			pfds[1 + i].events = 0;
-			if (pfds[1 + i].fd != -1)
-				pfds[1 + i].events = POLLIN;
-		}
-
-		if (poll(pfds, sizeof(pfds) / sizeof(pfds[0]), INFTIM) == -1)
+		if (poll(pfds, i, INFTIM) == -1)
 			err(1, "poll");
 
 		if (pfds[0].revents & POLLHUP)
 			break;
-
 		if (pfds[0].revents & POLLOUT) {
 			switch (msgbuf_write(&msgq)) {
 			case 0:
@@ -112,14 +214,13 @@ proc_rrdp(int fd)
 				err(1, "write");
 			}
 		}
-
 		if (pfds[0].revents & POLLIN) {
-			char		*local, *notifyuri, *repouri;
+			char		*local, *notifyuri, *repouri, *last_mod;
 			enum rrdp_msg	type;
 			size_t		id;
-			int		outfd;
+			int		infd, status;
 
-			outfd = io_recvfd(fd, &type, sizeof(type));
+			infd = io_recvfd(fd, &type, sizeof(type));
 			io_simple_read(fd, &id, sizeof(id));
 
 			switch (type) {
@@ -127,40 +228,91 @@ proc_rrdp(int fd)
 				io_str_read(fd, &local);
 				io_str_read(fd, &notifyuri);
 				io_str_read(fd, &repouri);
-				if (outfd != -1)
+				if (infd != -1)
 					errx(1, "received unexpected fd");
 
-				warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
-				    local, notifyuri, repouri);
-				rrdp_fail(id);
+				s = rrdp_new(id, local, notifyuri,
+				    repouri);
+warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
+    local, notifyuri, repouri);
+				break;
+			case RRDP_HTTP_INI:
+				if (infd == -1)
+					errx(1, "expected fd not received");
+				s = rrdp_get(id);
+				s->infd = infd;
+				if (s->hash[0] != '\0')
+					SHA256_Init(&s->ctx);
+				s->state = PARSING;
+warnx("INI: off we go");
+				break;
+			case RRDP_HTTP_FIN:
+				io_simple_read(fd, &status, sizeof(status));
+				io_str_read(fd, &last_mod);
+				if (infd != -1)
+					errx(1, "received unexpected fd");
+
+				s = rrdp_get(id);
+
+				/*
+				check status, 200 or 304 or error
+				abort if bad status, 304 only for notification
+				then return success. else nothing
+				*/
+
+warnx("FIN: status: %d last_mod: %s",
+    status, last_mod);
+log_notification_xml(s->nxml);
+rrdp_fail(id);
 				break;
 			default:
-				errx(1, "unexpected message");
+				errx(1, "unexpected message %d", type);
 			}
 		}
 
-		for (i = 0; i < MAX_SESSIONS; i++) {
-			if (state[i].pfd->revents & POLLHUP) {
-				/* XXX TODO */
+		TAILQ_FOREACH_SAFE(s, &states, entry, ns) {
+			if (s->pfd == NULL)
 				continue;
-			}
-			if (state[i].pfd->revents & POLLIN) {
-				ssize_t s;
-				XML_Parser p = state[i].parser;
+			if (s->pfd->revents & POLLIN) {
+				XML_Parser p = s->parser;
+				ssize_t len;
 
-				s = read(state[i].pfd->fd, buf, sizeof(buf));
-				if (s == -1) {
+				len = read(s->infd, buf, sizeof(buf));
+				if (len == -1) {
 					/* XXX */
 					warn("read");
 					continue;
 				}
-				if (!XML_Parse(p, buf, s, 0)) {
+warnx("GOT %zd bytes", len);
+				if (s->hash[0] != '\0')
+					SHA256_Update(&s->ctx, buf, len);
+				if (XML_Parse(p, buf, len, len == 0) !=
+				    XML_STATUS_OK) {
 					warn("Parse error at line %lu:\n%s\n",
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
 					    );
 					/* XXX */
 					continue;
+				}
+				/* parser stage finished */
+				if (len == 0) {
+					close(s->infd);
+					s->infd = -1;
+
+					if (s->hash[0] != '\0') {
+						char h[SHA256_DIGEST_LENGTH];
+
+						SHA256_Final(h, &s->ctx);
+						if (memcmp(s->hash, h,
+						    sizeof(s->hash)) != 0) {
+							warnx("bad message "
+							   "digest");
+							/* XXX */
+							continue;
+						}
+					}
+					/* XXX next step */
 				}
 			}
 		}

@@ -7,7 +7,6 @@
 #include <openssl/sha.h>
 
 /* util */
-#define BASE10 10
 #define MAX_VERSION 1
 
 #define log_debuginfo(format, ...) logx(format, ##__VA_ARGS__)
@@ -55,7 +54,7 @@ int mv_delta(int, int, struct file_list *);
 int empty_file_list(struct file_list *);
 void add_to_file_list(struct file_list *, const char *, int, int);
 
-/* fetch_util */ 
+/* fetch_util */
 #define TIME_FORMAT "%a, %d %b %Y %T GMT"
 #define TIME_LEN 30
 #define HASH_CHAR_LEN (SHA256_DIGEST_LENGTH * 2)
@@ -95,52 +94,9 @@ void read_uri(int, int, int, char *);
 void receive_fds(int, int *);
 void send_fds(int, int *);
 
-/* notification */
-#define STATE_FILENAME ".state"
+struct notification_xml;
 
-enum notification_scope {
-	NOTIFICATION_SCOPE_START,
-	NOTIFICATION_SCOPE_NOTIFICATION,
-	NOTIFICATION_SCOPE_SNAPSHOT,
-	NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT,
-	NOTIFICATION_SCOPE_DELTA,
-	NOTIFICATION_SCOPE_END
-};
-
-enum notification_state {
-	NOTIFICATION_STATE_SNAPSHOT,
-	NOTIFICATION_STATE_DELTAS,
-	NOTIFICATION_STATE_NONE,
-	NOTIFICATION_STATE_ERROR
-};
-
-struct delta_item {
-	char *uri;
-	char *hash;
-	int serial;
-	TAILQ_ENTRY(delta_item) q;
-};
-
-TAILQ_HEAD(delta_q, delta_item);
-
-struct delta_item	*new_delta(const char *, const char *, int);
-void			free_delta(struct delta_item *);
-
-struct notification_xml {
-	enum notification_scope	scope;
-	char			*xmlns;
-	int			version;
-	char			*session_id;
-	int			serial;
-	char			*current_session_id;
-	int			current_serial;
-	char			*snapshot_uri;
-	char			*snapshot_hash;
-	struct delta_q		delta_q;
-	enum notification_state	state;
-};
-
-struct notification_xml	*new_notification_xml(void);
+struct notification_xml	*new_notification_xml(XML_Parser);
 void			free_notification_xml(struct notification_xml *);
 void			log_notification_xml(struct notification_xml *);
 void			check_state(struct notification_xml *);

@@ -37,11 +37,12 @@ struct snapshot_xml {
 	char			*xmlns;
 	int			version;
 	char			*session_id;
+	char			*expected_session_id;
 	int			serial;
+	int			expected_serial;
 	char			*publish_uri;
 	char			*publish_data;
 	unsigned int		publish_data_length;
-	struct notification_xml	*nxml;
 	struct file_list	*file_list;
 };
 
@@ -135,12 +136,12 @@ start_snapshot_elem(struct xmldata *xml_data, const char **attr)
 			snapshot_xml->xmlns = xstrdup(attr[i+1]);
 		else if (strcmp("version", attr[i]) == 0)
 			snapshot_xml->version =
-			    (int)strtol(attr[i+1], NULL, BASE10);
+			    (int)strtol(attr[i+1], NULL, 10);
 		else if (strcmp("session_id", attr[i]) == 0)
 			snapshot_xml->session_id = xstrdup(attr[i+1]);
 		else if (strcmp("serial", attr[i]) == 0)
 			snapshot_xml->serial =
-			    (int)strtol(attr[i+1], NULL, BASE10);
+			    (int)strtol(attr[i+1], NULL, 10);
 		else {
 			PARSE_FAIL(p,
 			    "parse failed - non conforming "
@@ -157,10 +158,10 @@ start_snapshot_elem(struct xmldata *xml_data, const char **attr)
 	if (snapshot_xml->version <= 0 ||
 	    snapshot_xml->version > MAX_VERSION)
 		PARSE_FAIL(p, "parse failed - invalid version");
-	if (strcmp(snapshot_xml->nxml->session_id,
+	if (strcmp(snapshot_xml->expected_session_id,
 	    snapshot_xml->session_id) != 0)
 		PARSE_FAIL(p, "parse failed - session_id mismatch");
-	if (snapshot_xml->nxml->serial != snapshot_xml->serial)
+	if (snapshot_xml->expected_serial != snapshot_xml->serial)
 		PARSE_FAIL(p, "parse failed - serial mismatch");
 
 	snapshot_xml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
@@ -308,7 +309,7 @@ setup_xml_data(struct xmldata *xml_data, struct snapshot_xml *snapshot_xml,
 	xml_data->xml_data = snapshot_xml;
 	zero_snapshot_global_data(snapshot_xml);
 	zero_snapshot_publish_data(snapshot_xml);
-	snapshot_xml->nxml = nxml;
+	//snapshot_xml->nxml = nxml;
 	snapshot_xml->file_list = file_list;
 }
 

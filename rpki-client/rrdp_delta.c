@@ -38,6 +38,7 @@ struct delta_xml {
 	char			*xmlns;
 	int			version;
 	char			*session_id;
+	char			*expected_session_id;
 	int			serial;
 	char			*publish_uri;
 	char			*publish_hash;
@@ -225,12 +226,12 @@ start_delta_elem(struct xmldata *xml_data, const char **attr)
 			delta_xml->xmlns = xstrdup(attr[i+1]);
 		else if (strcmp("version", attr[i]) == 0)
 			delta_xml->version =
-			    (int)strtol(attr[i+1], NULL, BASE10);
+			    (int)strtol(attr[i+1], NULL, 10);
 		else if (strcmp("session_id", attr[i]) == 0)
 			delta_xml->session_id = xstrdup(attr[i+1]);
 		else if (strcmp("serial", attr[i]) == 0)
 			delta_xml->serial =
-			    (int)strtol(attr[i+1], NULL, BASE10);
+			    (int)strtol(attr[i+1], NULL, 10);
 		else
 			PARSE_FAIL(p, "parse failed - non conforming "
 			    "attribute found in delta elem");
@@ -242,7 +243,7 @@ start_delta_elem(struct xmldata *xml_data, const char **attr)
 		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
 	if (delta_xml->version <= 0 || delta_xml->version > MAX_VERSION)
 		PARSE_FAIL(p, "parse failed - invalid version");
-	if (strcmp(delta_xml->nxml->session_id, delta_xml->session_id) != 0)
+	if (strcmp(delta_xml->expected_session_id, delta_xml->session_id) != 0)
 		PARSE_FAIL(p, "parse failed - session_id mismatch");
 
 	delta_xml->scope = DELTA_SCOPE_DELTA;

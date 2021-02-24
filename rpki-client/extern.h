@@ -269,7 +269,10 @@ enum rtype {
  */
 enum rrdp_msg {
 	RRDP_START,
-	RRDP_END
+	RRDP_END,
+	RRDP_HTTP_REQ,
+	RRDP_HTTP_INI,
+	RRDP_HTTP_FIN
 };
 
 /*
@@ -379,7 +382,7 @@ int		 ip_addr_parse(const ASN1_BIT_STRING *,
 void		 ip_addr_print(const struct ip_addr *, enum afi, char *,
 			size_t);
 void		 ip_addr_buffer(struct ibuf *, const struct ip_addr *);
-void		 ip_addr_range_buffer(struct ibuf *, 
+void		 ip_addr_range_buffer(struct ibuf *,
 			const struct ip_addr_range *);
 void		 ip_addr_read(int, struct ip_addr *);
 void		 ip_addr_range_read(int, struct ip_addr_range *);

@@ -284,6 +284,33 @@ repo_alloc(void)
 }
 
 static void
+http_rrdp_fetch(size_t id, const char *uri, const char *last_mod)
+{
+	enum rrdp_msg	type = RRDP_HTTP_INI;
+	struct ibuf	*b1, *b2;
+	int pi[2];
+
+	if (pipe2(pi, O_CLOEXEC | O_NONBLOCK) == -1)
+		err(1, "pipe");
+
+	if ((b1 = ibuf_open(sizeof(type) + sizeof(id))) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b1, &type, sizeof(type));
+	io_simple_buffer(b1, &id, sizeof(id));
+	b1->fd = pi[0];
+	ibuf_close(&rrdpq, b1);
+
+	if ((b2 = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b2, &id, sizeof(id));
+	io_str_buffer(b2, uri);
+	io_str_buffer(b2, last_mod);
+	/* pass pipe as fd */
+	b2->fd = pi[1];
+	ibuf_close(&httpq, b2);
+}
+
+static void
 http_ta_fetch(struct repo *rp)
 {
 	struct ibuf	*b;
@@ -311,8 +338,11 @@ http_ta_fetch(struct repo *rp)
 }
 
 static int
-http_done(struct repo *rp, int ok)
+http_done(struct repo *rp, int ok, int final, int status, char *last_mod)
 {
+	struct ibuf	*b;
+	enum rrdp_msg	type = RRDP_HTTP_FIN;
+
 	if (rp->repouri == NULL) {
 		/* Move downloaded TA file into place, or unlink on failure. */
 		if (ok) {
@@ -327,23 +357,48 @@ http_done(struct repo *rp, int ok)
 		}
 		free(rp->temp);
 		rp->temp = NULL;
+
+		if (ok) {
+			logx("%s: loaded from network", rp->local);
+		} else if (rp->uriidx < REPO_MAX_URI - 1 &&
+		    rp->uris[rp->uriidx + 1] != NULL) {
+			logx("%s: load from network failed, retry", rp->local);
+
+			rp->uriidx++;
+			repo_fetch(rp);
+			return 0;
+		} else {
+			logx("%s: load from network failed, "
+			    "fallback to cache", rp->local);
+		}
+		return 1;
 	}
 
-	if (!ok && rp->uriidx < REPO_MAX_URI - 1 &&
+	if (!final) {
+		/* RRDP request, relay response over to the rrdp process */
+		if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+			err(1, NULL);
+		io_simple_buffer(b, &type, sizeof(type));
+		io_simple_buffer(b, &rp->id, sizeof(rp->id));
+		io_simple_buffer(b, &status, sizeof(status));
+		io_str_buffer(b, last_mod);
+		ibuf_close(&rrdpq, b);
+		return 0;
+	}
+
+	if (ok) {
+		logx("%s: loaded from network", rp->local);
+	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
 	    rp->uris[rp->uriidx + 1] != NULL) {
 		logx("%s: load from network failed, retry", rp->local);
 
 		rp->uriidx++;
 		repo_fetch(rp);
 		return 0;
-	}
-
-	if (ok)
-		logx("%s: loaded from network", rp->local);
-	else
+	} else {
 		logx("%s: load from network failed, "
 		    "fallback to cache", rp->local);
-
+	}
 	return 1;
 }
 
@@ -386,11 +441,11 @@ repo_fetch(struct repo *rp)
 		if (rp->repouri == NULL) {
 			http_ta_fetch(rp);
 		} else {
-			enum rrdp_msg msgtype = RRDP_START;
+			enum rrdp_msg type = RRDP_START;
 
 			if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 				err(1, NULL);
-			io_simple_buffer(b, &msgtype, sizeof(msgtype));
+			io_simple_buffer(b, &type, sizeof(type));
 			io_simple_buffer(b, &rp->id, sizeof(rp->id));
 			io_str_buffer(b, rp->local);
 			io_str_buffer(b, rp->uris[rp->uriidx]);
@@ -1256,16 +1311,15 @@ main(int argc, char *argv[])
 			io_simple_read(http, &ok, sizeof(ok));
 			io_simple_read(http, &status, sizeof(status));
 			io_str_read(http, &last_mod);
-
-			/* XXX this is wrong for RRDP requests */
 			assert(i < rt.reposz);
 
 			assert(!rt.repos[i].loaded);
-			if (http_done(&rt.repos[i], ok)) {
+			if (http_done(&rt.repos[i], 0, 0, status, last_mod)) {
 				rt.repos[i].loaded = 1;
 				stats.repos++;
 				entityq_flush(&q, &rt.repos[i]);
 			}
+			free(last_mod);
 		}
 
 		/*
@@ -1273,20 +1327,26 @@ main(int argc, char *argv[])
 		 */
 		if ((pfd[3].revents & POLLIN)) {
 			enum rrdp_msg type;
+			char *uri, *last_mod;
 
 			io_simple_read(rrdp, &type, sizeof(type));
 			io_simple_read(rrdp, &i, sizeof(i));
-			io_simple_read(rrdp, &ok, sizeof(ok));
 			assert(i < rt.reposz);
 
 			assert(!rt.repos[i].loaded);
 			switch (type) {
 			case RRDP_END:
-				if (http_done(&rt.repos[i], ok)) {
+				io_simple_read(rrdp, &ok, sizeof(ok));
+				if (http_done(&rt.repos[i], ok, 1, 0, NULL)) {
 					rt.repos[i].loaded = 1;
 					stats.repos++;
 					entityq_flush(&q, &rt.repos[i]);
 				}
+				break;
+			case RRDP_HTTP_REQ:
+				io_str_read(rrdp, &uri);
+				io_str_read(rrdp, &last_mod);
+				http_rrdp_fetch(i, uri, last_mod);
 				break;
 			default:
 				errx(1, "unexpected rrdp response");
