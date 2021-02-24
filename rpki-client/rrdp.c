@@ -37,12 +37,15 @@
 static struct msgbuf	msgq;
 
 enum rrdp_state {
-	INIT,
 	REQ,
+	WAITING,
 	PARSING,
-	GET_NOTIFICATION,
-	GET_DELTA,
-	GET_SNAPSHOT,
+	DONE,
+};
+enum rrdp_task {
+	NOTIFICATION,
+	SNAPSHOT,
+	DELTA,
 };
 
 struct rrdp {
@@ -56,6 +59,7 @@ struct rrdp {
 	struct pollfd		*pfd;
 	int			 infd;
 	enum rrdp_state		 state;
+	enum rrdp_task		 task;
 
 	char			 hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX		 ctx;
@@ -76,11 +80,10 @@ xstrdup(const char *s)
 }
 
 static void
-rrdp_fail(size_t id)
+rrdp_done(size_t id, int ok)
 {
 	enum rrdp_msg type = RRDP_END;
 	struct ibuf *b;
-	int ok = 0;
 
 	if ((b = ibuf_open(sizeof(type) + sizeof(id) + sizeof(ok))) == NULL)
 		err(1, NULL);
@@ -119,7 +122,7 @@ rrdp_new(size_t id, char *local, char *notify, char *repo)
 	s->notifyuri = notify;
 	s->repouri = repo;
 
-	s->state = INIT;
+	s->state = REQ;
 	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
 		err(1, "XML_ParserCreate");
 
@@ -130,7 +133,6 @@ rrdp_new(size_t id, char *local, char *notify, char *repo)
 	return s;
 }
 
-#if 0
 static void
 rrdp_free(struct rrdp *s)
 {
@@ -150,7 +152,6 @@ rrdp_free(struct rrdp *s)
 
 	free(s);
 }
-#endif
 
 static struct rrdp *
 rrdp_get(size_t id)
@@ -162,6 +163,98 @@ rrdp_get(size_t id)
 			break;
 	return s;
 }
+
+static void
+rrdp_input(int fd)
+{
+	char *local, *notifyuri, *repouri, *last_mod;
+	struct rrdp *s;
+	enum rrdp_msg type;
+	size_t id;
+	int infd, status;
+
+	infd = io_recvfd(fd, &type, sizeof(type));
+	io_simple_read(fd, &id, sizeof(id));
+
+	switch (type) {
+	case RRDP_START:
+		io_str_read(fd, &local);
+		io_str_read(fd, &notifyuri);
+		io_str_read(fd, &repouri);
+		if (infd != -1)
+			errx(1, "received unexpected fd");
+
+		s = rrdp_new(id, local, notifyuri, repouri);
+
+warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
+    local, notifyuri, repouri);
+		break;
+	case RRDP_HTTP_INI:
+		if (infd == -1)
+			errx(1, "expected fd not received");
+		s = rrdp_get(id);
+		if (s == NULL) {
+			warnx("rrdp session %zu does not exist", id);
+			return;
+		}
+
+		if (s->state != WAITING)
+			errx(1, "bad internal state");
+
+		s->infd = infd;
+		if (s->hash[0] != '\0')
+			SHA256_Init(&s->ctx);
+		s->state = PARSING;
+warnx("INI: off we go");
+		break;
+	case RRDP_HTTP_FIN:
+		io_simple_read(fd, &status, sizeof(status));
+		io_str_read(fd, &last_mod);
+		if (infd != -1)
+			errx(1, "received unexpected fd");
+
+		s = rrdp_get(id);
+		if (s == NULL) {
+			warnx("rrdp session %zu does not exist", id);
+			return;
+		}
+		if (s->state != PARSING)
+			errx(1, "bad internal state");
+
+		s->state = DONE;
+		if (status == 200) {
+			/* XXX process next */
+warnx("FIN: status: %d last_mod: %s",
+    status, last_mod);
+log_notification_xml(s->nxml);
+rrdp_free(s);
+rrdp_done(id, 0);
+		} else if (status == 304 &&
+		    s->task == NOTIFICATION) {
+			rrdp_free(s);
+			rrdp_done(id, 1);
+		} else {
+			if (s->task == DELTA)
+				/* fallback to SNAPSHOT */ ;
+			else {
+				/* XXX cleanup */
+				rrdp_free(s);
+				rrdp_done(id, 0);
+			}
+		}
+		break;
+	default:
+		errx(1, "unexpected message %d", type);
+	}
+}
+
+#ifdef NOTYET
+static void
+rrdp_save_state(struct rrdp *s)
+{
+	/* session-id, serial, last_mod */
+}
+#endif
 
 void
 proc_rrdp(int fd)
@@ -187,9 +280,18 @@ proc_rrdp(int fd)
 				s->pfd = NULL;
 				continue;
 			}
-			if (s->state == INIT) {
-				rrdp_fetch(s->id, s->notifyuri, s->last_mod);
-				s->state = REQ;
+			/* request new assets when there are free sessions */
+			if (s->state == REQ) {
+				switch (s->task) {
+				case NOTIFICATION:
+					rrdp_fetch(s->id, s->notifyuri,
+					    s->last_mod);
+					break;
+				case SNAPSHOT:
+				case DELTA:
+					break;
+				}
+				s->state = WAITING;
 			}
 			s->pfd = pfds + i++;
 			s->pfd->fd = s->infd;
@@ -214,61 +316,8 @@ proc_rrdp(int fd)
 				err(1, "write");
 			}
 		}
-		if (pfds[0].revents & POLLIN) {
-			char		*local, *notifyuri, *repouri, *last_mod;
-			enum rrdp_msg	type;
-			size_t		id;
-			int		infd, status;
-
-			infd = io_recvfd(fd, &type, sizeof(type));
-			io_simple_read(fd, &id, sizeof(id));
-
-			switch (type) {
-			case RRDP_START:
-				io_str_read(fd, &local);
-				io_str_read(fd, &notifyuri);
-				io_str_read(fd, &repouri);
-				if (infd != -1)
-					errx(1, "received unexpected fd");
-
-				s = rrdp_new(id, local, notifyuri,
-				    repouri);
-warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
-    local, notifyuri, repouri);
-				break;
-			case RRDP_HTTP_INI:
-				if (infd == -1)
-					errx(1, "expected fd not received");
-				s = rrdp_get(id);
-				s->infd = infd;
-				if (s->hash[0] != '\0')
-					SHA256_Init(&s->ctx);
-				s->state = PARSING;
-warnx("INI: off we go");
-				break;
-			case RRDP_HTTP_FIN:
-				io_simple_read(fd, &status, sizeof(status));
-				io_str_read(fd, &last_mod);
-				if (infd != -1)
-					errx(1, "received unexpected fd");
-
-				s = rrdp_get(id);
-
-				/*
-				check status, 200 or 304 or error
-				abort if bad status, 304 only for notification
-				then return success. else nothing
-				*/
-
-warnx("FIN: status: %d last_mod: %s",
-    status, last_mod);
-log_notification_xml(s->nxml);
-rrdp_fail(id);
-				break;
-			default:
-				errx(1, "unexpected message %d", type);
-			}
-		}
+		if (pfds[0].revents & POLLIN)
+			rrdp_input(fd);
 
 		TAILQ_FOREACH_SAFE(s, &states, entry, ns) {
 			if (s->pfd == NULL)
@@ -276,6 +325,9 @@ rrdp_fail(id);
 			if (s->pfd->revents & POLLIN) {
 				XML_Parser p = s->parser;
 				ssize_t len;
+
+				if (s->state != PARSING)
+					errx(1, "bad parser state");
 
 				len = read(s->infd, buf, sizeof(buf));
 				if (len == -1) {
