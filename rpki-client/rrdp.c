@@ -40,6 +40,7 @@ enum rrdp_state {
 	REQ,
 	WAITING,
 	PARSING,
+	PARSED,
 	DONE,
 };
 enum rrdp_task {
@@ -165,6 +166,19 @@ rrdp_get(size_t id)
 }
 
 static void
+rrdp_failed(struct rrdp *s)
+{
+	size_t id = s->id;
+
+	if (s->task == DELTA) {
+		/* fallback to SNAPSHOT */ ;
+	} else {
+		rrdp_free(s);
+		rrdp_done(id, 0);
+	}
+}
+
+static void
 rrdp_input(int fd)
 {
 	char *local, *notifyuri, *repouri, *last_mod;
@@ -193,11 +207,8 @@ warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
 		if (infd == -1)
 			errx(1, "expected fd not received");
 		s = rrdp_get(id);
-		if (s == NULL) {
-			warnx("rrdp session %zu does not exist", id);
-			return;
-		}
-
+		if (s == NULL)
+			errx(1, "rrdp session %zu does not exist", id);
 		if (s->state != WAITING)
 			errx(1, "bad internal state");
 
@@ -205,7 +216,7 @@ warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
 		if (s->hash[0] != '\0')
 			SHA256_Init(&s->ctx);
 		s->state = PARSING;
-warnx("INI: off we go");
+warnx("%s: INI: off we go", s->localdir);
 		break;
 	case RRDP_HTTP_FIN:
 		io_simple_read(fd, &status, sizeof(status));
@@ -214,17 +225,17 @@ warnx("INI: off we go");
 			errx(1, "received unexpected fd");
 
 		s = rrdp_get(id);
-		if (s == NULL) {
-			warnx("rrdp session %zu does not exist", id);
-			return;
-		}
-		if (s->state != PARSING)
+		if (s == NULL)
+			errx(1, "rrdp session %zu does not exist", id);
+		if (s->state == PARSING)
+			warnx("%s: parser not finished", s->localdir);
+		if (s->state != PARSED)
 			errx(1, "bad internal state");
 
 		s->state = DONE;
 		if (status == 200) {
 			/* XXX process next */
-warnx("FIN: status: %d last_mod: %s",
+warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
     status, last_mod);
 log_notification_xml(s->nxml);
 rrdp_free(s);
@@ -234,13 +245,9 @@ rrdp_done(id, 0);
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
-			if (s->task == DELTA)
-				/* fallback to SNAPSHOT */ ;
-			else {
-				/* XXX cleanup */
-				rrdp_free(s);
-				rrdp_done(id, 0);
-			}
+			warnx("%s: failed with HTTP status %d", s->localdir,
+			    status);
+			rrdp_failed(s);
 		}
 		break;
 	default:
@@ -298,6 +305,10 @@ proc_rrdp(int fd)
 			s->pfd->events = POLLIN;
 		}
 
+		/*
+		 * Update main fd last.
+		 * The previous loop may have enqueue messages.
+		 */
 		pfds[0].fd = fd;
 		pfds[0].events = POLLIN;
 		if (msgq.queued)
@@ -331,20 +342,21 @@ proc_rrdp(int fd)
 
 				len = read(s->infd, buf, sizeof(buf));
 				if (len == -1) {
-					/* XXX */
-					warn("read");
+					warn("%s: read failure", s->localdir);
+					rrdp_failed(s);
 					continue;
 				}
-warnx("GOT %zd bytes", len);
+warnx("%s: GOT %zd bytes", s->localdir, len);
 				if (s->hash[0] != '\0')
 					SHA256_Update(&s->ctx, buf, len);
 				if (XML_Parse(p, buf, len, len == 0) !=
 				    XML_STATUS_OK) {
-					warn("Parse error at line %lu:\n%s\n",
+					warn("%s: parse error at line %lu: %s",
+					    s->localdir,
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
 					    );
-					/* XXX */
+					rrdp_failed(s);
 					continue;
 				}
 				/* parser stage finished */
@@ -358,13 +370,15 @@ warnx("GOT %zd bytes", len);
 						SHA256_Final(h, &s->ctx);
 						if (memcmp(s->hash, h,
 						    sizeof(s->hash)) != 0) {
-							warnx("bad message "
-							   "digest");
-							/* XXX */
+							warnx("%s: bad message "
+							   "digest",
+							   s->localdir);
+
+							rrdp_failed(s);
 							continue;
 						}
 					}
-					/* XXX next step */
+					s->state = PARSED;
 				}
 			}
 		}
