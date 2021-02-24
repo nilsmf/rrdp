@@ -434,7 +434,7 @@ http_redirect(struct http_connection *conn, char *uri)
 {
 	char *host, *port, *path;
 
-	warnx("redirect to %s", http_info(uri));
+	logx("redirect to %s", http_info(uri));
 
 	if (http_parse_uri(uri, &host, &port, &path) == -1) {
 		free(uri);
@@ -452,6 +452,8 @@ http_redirect(struct http_connection *conn, char *uri)
 	conn->last_modified = NULL;
 	free(conn->buf);
 	conn->buf = NULL;
+	conn->bufpos = 0;
+	conn->bufsz = 0;
 	tls_close(conn->tls);
 	tls_free(conn->tls);
 	conn->tls = NULL;
@@ -472,13 +474,16 @@ http_connect(struct http_connection *conn)
 	char pbuf[NI_MAXSERV], hbuf[NI_MAXHOST];
 	char *cause = "unknown";
 
-	if (conn->res == NULL)
-		conn->res = conn->res0;
-
 	if (conn->fd != -1) {
 		close(conn->fd);
 		conn->fd = -1;
 	}
+
+	/* start the loop below with first or next address */
+	if (conn->res == NULL)
+		conn->res = conn->res0;
+	else
+		conn->res = conn->res->ai_next;
 	for (; conn->res != NULL; conn->res = conn->res->ai_next) {
 		struct addrinfo *res = conn->res;
 		int fd, error, save_errno;
@@ -504,10 +509,10 @@ http_connect(struct http_connection *conn)
 
 		error = connect(conn->fd, res->ai_addr, res->ai_addrlen);
 		if (error == -1) {
-			if (errno == EINPROGRESS)
-				/* waiting for connect to finish */
+			if (errno == EINPROGRESS) {
+				/* waiting for connect to finish. */
 				return WANT_POLLOUT;
-			else {
+			} else {
 				save_errno = errno;
 				close(conn->fd);
 				conn->fd = -1;
@@ -522,7 +527,6 @@ http_connect(struct http_connection *conn)
 		if (proxyenv)
 			proxy_connect(conn->fd, sslhost, proxy_credentials); */
 #endif
-		break;
 	}
 	freeaddrinfo(conn->res0);
 	conn->res0 = NULL;
@@ -631,6 +635,7 @@ http_request(struct http_connection *conn)
 	}
 
 	free(conn->buf);
+	conn->bufpos = 0;
 	if ((conn->bufsz = asprintf(&conn->buf,
 	    "GET /%s HTTP/1.1\r\n"
 	    "Connection: close\r\n"
@@ -1214,7 +1219,7 @@ proc_http(char *bind_addr, int fd)
 			if (conn == NULL)
 				continue;
 			/* event not ready */
-			if (!(pfds[i].events & conn->events))
+			if (!(pfds[i].revents & (conn->events | POLLHUP)))
 				continue;
 
 			if (http_do(conn) == -1)
