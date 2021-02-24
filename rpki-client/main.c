@@ -1234,16 +1234,12 @@ main(int argc, char *argv[])
 			err(1, "poll");
 		}
 
-		if ((pfd[0].revents & (POLLERR|POLLNVAL)) ||
-		    (pfd[1].revents & (POLLERR|POLLNVAL)) ||
-		    (pfd[2].revents & (POLLERR|POLLNVAL)) ||
-		    (pfd[3].revents & (POLLERR|POLLNVAL)))
-			errx(1, "poll: bad fd");
-		if ((pfd[0].revents & POLLHUP) ||
-		    (pfd[1].revents & POLLHUP) ||
-		    (pfd[2].revents & POLLHUP) ||
-		    (pfd[3].revents & POLLHUP))
-			errx(1, "poll: hangup");
+		for (i = 0; i < 4; i++) {
+			if (pfd[i].revents & (POLLERR|POLLNVAL))
+				errx(1, "poll[%zu]: bad fd", i);
+			if (pfd[i].revents & POLLHUP)
+				errx(1, "poll[%zu]: hangup", i);
+		}
 
 		if (pfd[0].revents & POLLOUT) {
 			switch (msgbuf_write(&rsyncq)) {
