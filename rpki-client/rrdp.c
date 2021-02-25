@@ -170,6 +170,7 @@ rrdp_failed(struct rrdp *s)
 {
 	size_t id = s->id;
 
+	/* may need to do some cleanup in the repo here */
 	if (s->task == DELTA) {
 		/* fallback to SNAPSHOT */ ;
 	} else {
@@ -240,8 +241,7 @@ warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
 log_notification_xml(s->nxml);
 rrdp_free(s);
 rrdp_done(id, 0);
-		} else if (status == 304 &&
-		    s->task == NOTIFICATION) {
+		} else if (status == 304 && s->task == NOTIFICATION) {
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
