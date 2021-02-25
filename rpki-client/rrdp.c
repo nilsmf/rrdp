@@ -65,8 +65,10 @@ struct rrdp {
 	char			 hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX		 ctx;
 
+	struct rrdp_session	 session;
 	XML_Parser		 parser;
 	struct notification_xml	*nxml;
+	struct snapshot_xml	*sxml;
 };
 
 TAILQ_HEAD(,rrdp)	states = TAILQ_HEAD_INITIALIZER(states);
@@ -127,7 +129,7 @@ rrdp_new(size_t id, char *local, char *notify, char *repo)
 	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
 		err(1, "XML_ParserCreate");
 
-	s->nxml = new_notification_xml(s->parser);
+	s->nxml = new_notification_xml(s->parser, &s->session);
 
 	TAILQ_INSERT_TAIL(&states, s, entry);
 
@@ -150,6 +152,7 @@ rrdp_free(struct rrdp *s)
 	free(s->notifyuri);
 	free(s->repouri);
 	free(s->localdir);
+	free(s->session.session_id);
 
 	free(s);
 }
@@ -214,8 +217,6 @@ warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
 			errx(1, "bad internal state");
 
 		s->infd = infd;
-		if (s->hash[0] != '\0')
-			SHA256_Init(&s->ctx);
 		s->state = PARSING;
 warnx("%s: INI: off we go", s->localdir);
 		break;
@@ -238,9 +239,15 @@ warnx("%s: INI: off we go", s->localdir);
 			/* XXX process next */
 warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
     status, last_mod);
+if (s->task == NOTIFICATION) {
 log_notification_xml(s->nxml);
+s->sxml = new_snapshot_xml(s->parser, &s->session);
+s->task = SNAPSHOT;
+s->state = REQ;
+} else {
 rrdp_free(s);
 rrdp_done(id, 0);
+}
 		} else if (status == 304 && s->task == NOTIFICATION) {
 			rrdp_free(s);
 			rrdp_done(id, 1);
@@ -289,6 +296,7 @@ proc_rrdp(int fd)
 			}
 			/* request new assets when there are free sessions */
 			if (s->state == REQ) {
+				const char *uri;
 				switch (s->task) {
 				case NOTIFICATION:
 					rrdp_fetch(s->id, s->notifyuri,
@@ -296,6 +304,11 @@ proc_rrdp(int fd)
 					break;
 				case SNAPSHOT:
 				case DELTA:
+					uri = notification_get_next(s->nxml,
+					    s->hash, sizeof(s->hash),
+					    s->task == DELTA);
+					SHA256_Init(&s->ctx);
+					rrdp_fetch(s->id, uri, NULL);
 					break;
 				}
 				s->state = WAITING;
@@ -346,12 +359,11 @@ proc_rrdp(int fd)
 					rrdp_failed(s);
 					continue;
 				}
-warnx("%s: GOT %zd bytes", s->localdir, len);
-				if (s->hash[0] != '\0')
+				if (s->task != NOTIFICATION)
 					SHA256_Update(&s->ctx, buf, len);
 				if (XML_Parse(p, buf, len, len == 0) !=
 				    XML_STATUS_OK) {
-					warn("%s: parse error at line %lu: %s",
+					warnx("%s: parse error at line %lu: %s",
 					    s->localdir,
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
@@ -364,7 +376,7 @@ warnx("%s: GOT %zd bytes", s->localdir, len);
 					close(s->infd);
 					s->infd = -1;
 
-					if (s->hash[0] != '\0') {
+					if (s->task != NOTIFICATION) {
 						char h[SHA256_DIGEST_LENGTH];
 
 						SHA256_Final(h, &s->ctx);
@@ -377,7 +389,10 @@ warnx("%s: GOT %zd bytes", s->localdir, len);
 							rrdp_failed(s);
 							continue;
 						}
+warnx("%s: XML hash valid", s->localdir);
 					}
+warnx("%s: XML file parsed", s->localdir);
+
 					s->state = PARSED;
 				}
 			}

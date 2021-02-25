@@ -16,6 +16,7 @@
 
 #include <sys/stat.h>
 
+#include <assert.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -59,13 +60,12 @@ TAILQ_HEAD(delta_q, delta_item);
 
 struct notification_xml {
 	XML_Parser		parser;
+	struct rrdp_session	*current;
 	char			*session_id;
-	char			*current_session_id;
 	char			*snapshot_uri;
 	char			snapshot_hash[SHA256_DIGEST_LENGTH];
 	struct delta_q		delta_q;
 	long long		serial;
-	long long		current_serial;
 	int			version;
 	enum notification_scope	scope;
 	enum notification_state	state;
@@ -145,7 +145,7 @@ free_delta(struct delta_item *d)
 	free(d);
 }
 
-void
+static void
 check_state(struct notification_xml *nxml)
 {
 	struct delta_item *d;
@@ -158,7 +158,7 @@ check_state(struct notification_xml *nxml)
 		return;
 
 	/* No current data have to go from the snapshot */
-	if (nxml->current_session_id == NULL || nxml->current_serial == 0) {
+	if (nxml->current->session_id == NULL || nxml->current->serial == 0) {
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
@@ -170,12 +170,12 @@ check_state(struct notification_xml *nxml)
 	}
 
 	/* New session available should go from snapshot */
-	if(strcmp(nxml->current_session_id, nxml->session_id) != 0) {
+	if(strcmp(nxml->current->session_id, nxml->session_id) != 0) {
 		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 		return;
 	}
 
-	serial_diff = nxml->serial - nxml->current_serial;
+	serial_diff = nxml->serial - nxml->current->serial;
 
 	if (serial_diff == 0) {
 		/* Up to date, no further action needed */
@@ -186,7 +186,7 @@ check_state(struct notification_xml *nxml)
 	if (serial_diff < 0) {
 		/* current serial is larger! can't even go from snapshot */
 		warnx("serial_diff is negative %lld vs %lld",
-		    nxml->serial, nxml->current_serial);
+		    nxml->serial, nxml->current->serial);
 		nxml->state = NOTIFICATION_STATE_ERROR;
 		return;
 	}
@@ -197,9 +197,9 @@ check_state(struct notification_xml *nxml)
 	}
 
 	/* current serial is greater lets try deltas */
-	TAILQ_FOREACH(d, &(nxml->delta_q), q) {
+	TAILQ_FOREACH(d, &nxml->delta_q, q) {
 		serial_counter++;
-		if (nxml->current_serial + serial_counter != d->serial) {
+		if (nxml->current->serial + serial_counter != d->serial) {
 			/* missing delta fall back to snapshot */
 			nxml->state = NOTIFICATION_STATE_SNAPSHOT;
 			return;
@@ -228,25 +228,29 @@ start_notification_elem(struct notification_xml *nxml, const char **attr)
 		    "elem unexpectedely");
 	}
 	for (i = 0; attr[i]; i += 2) {
-		const char *errstr = NULL;
+		const char *errstr;
 		if (strcmp("xmlns", attr[i]) == 0) {
 			has_xmlns = 1;
-		} else if (strcmp("session_id", attr[i]) == 0) {
+			continue;
+		}
+		if (strcmp("session_id", attr[i]) == 0) {
 			nxml->session_id = xstrdup(attr[i+1]);
-		} else if (strcmp("version", attr[i]) == 0) {
+			continue;
+		}
+		if (strcmp("version", attr[i]) == 0) {
 			nxml->version = strtonum(attr[i + 1],
 			    1, MAX_VERSION, &errstr);
-		} else if (strcmp("serial", attr[i]) == 0) {
+			if (errstr == NULL)
+				continue;
+		}
+		if (strcmp("serial", attr[i]) == 0) {
 			nxml->serial = strtonum(attr[i + 1],
 			    1, LLONG_MAX, &errstr);
-		} else {
-			PARSE_FAIL(p, "parse failed - non conforming "
-			    "attribute found in notification elem");
+			if (errstr == NULL)
+				continue;
 		}
-		if (errstr != NULL) {
-			PARSE_FAIL(p, "parse failed - non conforming "
-			    "attribute found in notification elem");
-		}
+		PARSE_FAIL(p, "parse failed - non conforming "
+		    "attribute found in notification elem");
 	}
 	if (!(has_xmlns && nxml->version && nxml->session_id && nxml->serial)) {
 		PARSE_FAIL(p, "parse failed - incomplete "
@@ -350,7 +354,7 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 	if (hasUri != 1 || hasHash != 1 || delta_serial == 0)
 		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
 
-	if (nxml->current_serial && nxml->current_serial < delta_serial) {
+	if (nxml->current->serial && nxml->current->serial < delta_serial) {
 		if (add_delta(nxml, delta_uri, delta_hash, delta_serial) == 0)
 			PARSE_FAIL(p, "parse failed - adding delta failed");
 	}
@@ -463,12 +467,12 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 		}
 		line[s - 1] = '\0';
 		if (l == 0)
-			nxml->current_session_id = xstrdup(line);
+			nxml->current->session_id = xstrdup(line);
 		else if (l == 1) {
 			/*
 			 * XXXCJ use strtonum here and maybe 64bit int
 			 */
-			nxml->current_serial = (int)strtol(line, NULL, 10);
+			nxml->current->serial = (int)strtol(line, NULL, 10);
 		} else if (l == 2) {
 			if (strlen(line) == TIME_LEN - 1) {
 				strncpy(xml_data->modified_since, line,
@@ -484,7 +488,7 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 	}
 	logx("current session: %s\ncurrent serial: %lld\nmodified since:"
 	    " %s\n",
-	    nxml->current_session_id ?: "NULL", nxml->current_serial,
+	    nxml->current->session_id ?: "NULL", nxml->current->serial,
 	    xml_data->modified_since);
 	fclose(f);
 }
@@ -493,25 +497,25 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 void
 log_notification_xml(struct notification_xml *nxml)
 {
-	logx("scope: %d", nxml->scope);
-	logx("state: %d", nxml->state);
-	logx("version: %d", nxml->version);
-	logx("current_session_id: %s", nxml->current_session_id ?: "NULL");
-	logx("current_serial: %lld", nxml->current_serial);
-	logx("session_id: %s", nxml->session_id ?: "NULL");
-	logx("serial: %lld", nxml->serial);
-	logx("snapshot_uri: %s", nxml->snapshot_uri ?: "NULL");
+	logx("session_id: %s, serial: %lld", nxml->session_id, nxml->serial);
+	logx("snapshot_uri: %s", nxml->snapshot_uri);
+
+/* XXX BLODDY HACK */
+	nxml->current->session_id = nxml->session_id;
+	nxml->current->serial = nxml->serial;
+
 }
 
 struct notification_xml *
-new_notification_xml(XML_Parser p)
+new_notification_xml(XML_Parser p, struct rrdp_session *rs)
 {
 	struct notification_xml *nxml;
 
-	if ((nxml = calloc(1, sizeof(struct notification_xml))) == NULL)
-		err(1, "%s - calloc", __func__);
+	if ((nxml = calloc(1, sizeof(*nxml))) == NULL)
+		err(1, "%s", __func__);
 	TAILQ_INIT(&(nxml->delta_q));
 	nxml->parser = p;
+	nxml->current = rs;
 
 	XML_SetElementHandler(nxml->parser, notification_xml_elem_start,
 	    notification_xml_elem_end);
@@ -535,4 +539,18 @@ free_notification_xml(struct notification_xml *nxml)
 		free_delta(d);
 	}
 	free(nxml);
+}
+
+const char *
+notification_get_next(struct notification_xml *nxml, char *hash, size_t hlen,
+    int delta)
+{
+	if (!delta) {
+		assert(hlen == sizeof(nxml->snapshot_hash));
+		memcpy(hash, nxml->snapshot_hash, hlen);
+
+		return nxml->snapshot_uri;
+	} else {
+		errx(1, "NOT YET DONE");
+	}
 }

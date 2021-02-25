@@ -54,11 +54,6 @@ int mv_delta(int, int, struct file_list *);
 int empty_file_list(struct file_list *);
 void add_to_file_list(struct file_list *, const char *, int, int);
 
-/* fetch_util */
-#define TIME_FORMAT "%a, %d %b %Y %T GMT"
-#define TIME_LEN 30
-#define HASH_CHAR_LEN (SHA256_DIGEST_LENGTH * 2)
-
 /* save everyone doing this code over and over */
 #define PARSE_FAIL(p, ...) do {		\
 	XML_StopParser(p, XML_FALSE);	\
@@ -66,22 +61,8 @@ void add_to_file_list(struct file_list *, const char *, int, int);
 	return;				\
 } while(0)
 
-enum uri_type {
-	URI_TYPE_BASIC,
-	URI_TYPE_HASH,
-	URI_TYPE_MODIFIED_SINCE
-};
-
-struct uri_data {
-	enum uri_type uri_type;
-	char hash[HASH_CHAR_LEN];
-	char modified_since[TIME_LEN];
-	char *uri;
-	int xml_wpipe;
-	int res_wpipe;
-	SHA256_CTX ctx;
-};
-
+#define HASH_CHAR_LEN (SHA256_DIGEST_LENGTH * 2)
+#define TIME_LEN 30
 struct xmldata {
 	struct opts *opts;
 	XML_Parser parser;
@@ -90,24 +71,28 @@ struct xmldata {
 };
 
 int fetch_uri_data(char *, char *, char *, struct opts *, XML_Parser);
-void read_uri(int, int, int, char *);
-void receive_fds(int, int *);
-void send_fds(int, int *);
 
+struct rrdp_session {
+	char			*session_id;
+	long long		 serial;
+};
+
+/* notification */
 struct notification_xml;
 
-struct notification_xml	*new_notification_xml(XML_Parser);
-void			free_notification_xml(struct notification_xml *);
-void			log_notification_xml(struct notification_xml *);
-void			check_state(struct notification_xml *);
-
-struct xmldata	*new_notification_xml_data(char *, struct opts *);
-void		free_xml_data(struct xmldata *);
-void		save_notification_data(struct xmldata *);
+struct notification_xml	*new_notification_xml(XML_Parser,
+			    struct rrdp_session *);
+void		 	 free_notification_xml(struct notification_xml *);
+void			 log_notification_xml(struct notification_xml *);
+const char		*notification_get_next(struct notification_xml *,
+			    char *, size_t, int);
 
 /* snapshot */
-int fetch_snapshot_xml(char *, char *, struct opts *, struct notification_xml *,
-    struct file_list *);
+struct snapshot_xml;
+
+struct snapshot_xml	*new_snapshot_xml(XML_Parser, struct rrdp_session *);
+void			 free_snapshot_xml(struct snapshot_xml *);
+void			 log_snapshot_xml(struct snapshot_xml *);
 
 /* delta */
 int fetch_delta_xml(char *, char *, struct opts *, struct notification_xml *,
