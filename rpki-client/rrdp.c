@@ -16,8 +16,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <sys/queue.h>
+#include <sys/stat.h>
 
 #include <err.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
 #include <string.h>
@@ -33,6 +36,8 @@
 
 #define MAX_SESSIONS	12
 #define	READ_BUF_SIZE	(32 * 1024)
+
+#define STATE_FILENAME	".state"
 
 static struct msgbuf	msgq;
 
@@ -52,13 +57,13 @@ enum rrdp_task {
 struct rrdp {
 	TAILQ_ENTRY(rrdp)	 entry;
 	size_t			 id;
-	char			*last_mod;
 	char			*notifyuri;
 	char			*repouri;
 	char			*localdir;
 
 	struct pollfd		*pfd;
 	int			 infd;
+	int			 localfd;
 	enum rrdp_state		 state;
 	enum rrdp_task		 task;
 
@@ -82,6 +87,10 @@ xstrdup(const char *s)
 	return r;
 }
 
+/*
+ * Report back that a RRDP request finished.
+ * ok should only be set to 1 if the cache is now up-to-date.
+ */
 static void
 rrdp_done(size_t id, int ok)
 {
@@ -96,6 +105,14 @@ rrdp_done(size_t id, int ok)
 	ibuf_close(&msgq, b);
 }
 
+/*
+ * Request an URI to be fetched via HTTPS.
+ * The main process will respond with a RRDP_HTTP_INI which includes
+ * the file descriptor to read from. RRDP_HTTP_FIN is sent at the
+ * end of the request with the HTTP status code and last modified timestamp.
+ * If the request should not set the If-Modified-Since: header then last_mod
+ * should be set to NULL, else it should point to a proper date string.
+ */
 static void
 rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 {
@@ -111,10 +128,119 @@ rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 	ibuf_close(&msgq, b);
 }
 
+/*
+ * Parse the RRDP state file if it exists and set the session struct
+ * based on that information.
+ */
+static void
+rrdp_state_get(struct rrdp *s)
+{
+	FILE *f;
+	int fd, ln = 0;
+	const char *errstr;
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t n;
+
+	if ((fd = openat(s->localfd, STATE_FILENAME, O_RDONLY)) == -1) {
+//		if (errno != ENOENT)
+			warn("%s: open state file", s->localdir);
+		return;
+	}
+	f = fdopen(fd, "r");
+	if (f == NULL)
+		err(1, "fdopen");
+
+	while ((n = getline(&line, &len, f)) != -1) {
+		if (line[n - 1] == '\n')
+			line[n - 1] = '\0';
+		switch (ln) {
+		case 0:
+			s->session.session_id = xstrdup(line);
+			break;
+		case 1:
+			s->session.serial = strtonum(line, 1, LLONG_MAX,
+			    &errstr);
+			if (errstr)
+				goto fail;
+			break;
+		case 2:
+			s->session.last_mod = xstrdup(line);
+			break;
+		default:
+			goto fail;
+		}
+		ln++;
+	}
+
+warnx("%s: GOT session_id: %s serial: %lld last_mod: %s", s->localdir,
+s->session.session_id, s->session.serial, s->session.last_mod);
+
+	free(line);
+	if (ferror(f))
+		goto fail;
+	fclose(f);
+	return;
+
+fail:
+	warnx("%s: troubles reading state file", s->localdir);
+	fclose(f);
+	free(s->session.session_id);
+	free(s->session.last_mod);
+	memset(&s->session, 0, sizeof(s->session));
+}
+
+/*
+ * Carefully write the RRDP session state file back.
+ */
+static void
+rrdp_state_save(struct rrdp *s)
+{
+	char *temp;
+	FILE *f;
+	int fd;
+
+warnx("%s: SAVE session_id: %s serial: %lld last_mod: %s", s->localdir,
+s->session.session_id, s->session.serial, s->session.last_mod);
+
+	if (asprintf(&temp, "%s.XXXXXXXX", STATE_FILENAME) == -1)
+		err(1, NULL);
+
+	if ((fd = mkostempat(s->localfd, temp, O_CLOEXEC)) == -1)
+		err(1, "%s: mkostempat: %s", s->localdir, temp);
+	(void) fchmod(fd, 0644);
+	f = fdopen(fd, "w");
+	if (f == NULL)
+		err(1, "fdopen");
+
+	/* write session state file out */
+	if (fprintf(f, "%s\n%lld\n%s\n", s->session.session_id,
+	    s->session.serial, s->session.last_mod) < 0) {
+		fclose(f);
+		goto fail;
+	}
+	if (fclose(f) != 0)
+		goto fail;
+
+	if (renameat(s->localfd, temp, s->localfd, STATE_FILENAME) == -1)
+		warn("%s: rename state file", s->localdir);
+	free(temp);
+	return;
+
+fail:
+	warnx("%s: failed to save state", s->localdir);
+	unlinkat(s->localfd, temp, 0);
+	free(temp);
+}
+
 static struct rrdp *
 rrdp_new(size_t id, char *local, char *notify, char *repo)
 {
 	struct rrdp *s;
+	int lfd;
+
+	if ((lfd = open(local, O_RDONLY, 0)) == -1)
+		err(1, "base directory %s", local);
 
 	if ((s = calloc(1, sizeof(*s))) == NULL)
 		err(1, NULL);
@@ -122,8 +248,11 @@ rrdp_new(size_t id, char *local, char *notify, char *repo)
 	s->infd = -1;
 	s->id = id;
 	s->localdir = local;
+	s->localfd = lfd;
 	s->notifyuri = notify;
 	s->repouri = repo;
+
+	rrdp_state_get(s);
 
 	s->state = REQ;
 	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
@@ -144,14 +273,18 @@ rrdp_free(struct rrdp *s)
 
 	TAILQ_REMOVE(&states, s, entry);
 
+	free_notification_xml(s->nxml);
+	free_snapshot_xml(s->sxml);
+	/* XXX free_delta_xml(s->dxml); */
+
 	if (s->infd != -1)
 		close(s->infd);
 	if (s->parser)
 		XML_ParserFree(s->parser);
-	free(s->last_mod);
 	free(s->notifyuri);
 	free(s->repouri);
 	free(s->localdir);
+	free(s->session.last_mod);
 	free(s->session.session_id);
 
 	free(s);
@@ -175,8 +308,16 @@ rrdp_failed(struct rrdp *s)
 
 	/* may need to do some cleanup in the repo here */
 	if (s->task == DELTA) {
-		/* fallback to SNAPSHOT */ ;
+		/* fallback to a snapshot */
+		/* XXX free_delta_xml(s->dxml); */
+		s->sxml = new_snapshot_xml(s->parser, &s->session);
+		s->task = SNAPSHOT;
+		s->state = REQ;
 	} else {
+		/*
+		 * TODO: update state to track recurring failures
+		 * and fall back to rsync after a while.
+		 */
 		rrdp_free(s);
 		rrdp_done(id, 0);
 	}
@@ -249,6 +390,7 @@ rrdp_free(s);
 rrdp_done(id, 0);
 }
 		} else if (status == 304 && s->task == NOTIFICATION) {
+			rrdp_state_save(s);
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
@@ -262,14 +404,6 @@ rrdp_done(id, 0);
 	}
 }
 
-#ifdef NOTYET
-static void
-rrdp_save_state(struct rrdp *s)
-{
-	/* session-id, serial, last_mod */
-}
-#endif
-
 void
 proc_rrdp(int fd)
 {
@@ -278,7 +412,7 @@ proc_rrdp(int fd)
 	struct rrdp *s, *ns;
 	size_t i;
 
-	if (pledge("stdio recvfd", NULL) == -1)
+	if (pledge("stdio rpath wpath cpath fattr recvfd", NULL) == -1)
 		err(1, "pledge");
 
 	memset(&pfds, 0, sizeof(pfds));
@@ -300,7 +434,7 @@ proc_rrdp(int fd)
 				switch (s->task) {
 				case NOTIFICATION:
 					rrdp_fetch(s->id, s->notifyuri,
-					    s->last_mod);
+					    s->session.last_mod);
 					break;
 				case SNAPSHOT:
 				case DELTA:

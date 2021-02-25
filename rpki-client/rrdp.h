@@ -73,6 +73,7 @@ struct xmldata {
 int fetch_uri_data(char *, char *, char *, struct opts *, XML_Parser);
 
 struct rrdp_session {
+	char			*last_mod;
 	char			*session_id;
 	long long		 serial;
 };

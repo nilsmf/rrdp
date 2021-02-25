@@ -147,6 +147,9 @@ filepath_exists(char *file)
 {
 	struct filepath needle;
 
+	if (strcmp(file + strlen(file) - strlen("/.state"), "/.state") == 0)
+		return 1;
+
 	needle.file = file;
 	return RB_FIND(filepath_tree, &fpt, &needle) != NULL;
 }
@@ -1168,7 +1171,7 @@ main(int argc, char *argv[])
 			if (fchdir(cachefd) == -1)
 				err(1, "fchdir");
 
-			if (pledge("stdio rpath wpath cpath recvfd unveil",
+			if (pledge("stdio rpath wpath cpath recvfd fattr unveil",
 			    NULL) == -1)
 				err(1, "pledge");
 
