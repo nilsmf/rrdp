@@ -73,7 +73,7 @@ write_snapshot_publish(struct snapshot_xml *sxml)
 	add_to_file_list(sxml->file_list, filename, 0, 0);
 #endif
 
-warnx("%s", sxml->publish_uri);
+//warnx("%s", sxml->publish_uri);
 
 	free(sxml->publish_uri);
 	free(sxml->publish_data);
@@ -281,6 +281,9 @@ new_snapshot_xml(XML_Parser p, struct rrdp_session *rs)
 void
 free_snapshot_xml(struct snapshot_xml *sxml)
 {
+	if (sxml == NULL)
+		return;
+
 	free(sxml->publish_uri);
 	free(sxml->publish_data);
 	free(sxml->session_id);
