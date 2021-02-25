@@ -62,7 +62,7 @@ struct notification_xml {
 	char			*session_id;
 	char			*current_session_id;
 	char			*snapshot_uri;
-	char			 snapshot_hash[SHA256_DIGEST_LENGTH];
+	char			snapshot_hash[SHA256_DIGEST_LENGTH];
 	struct delta_q		delta_q;
 	long long		serial;
 	long long		current_serial;
@@ -214,19 +214,6 @@ check_state(struct notification_xml *nxml)
 	log_debuginfo("Happy to apply %d deltas", serial_counter);
 	/* All serials matched */
 	nxml->state = NOTIFICATION_STATE_DELTAS;
-}
-
-void
-log_notification_xml(struct notification_xml *nxml)
-{
-	logx("scope: %d", nxml->scope);
-	logx("state: %d", nxml->state);
-	logx("version: %d", nxml->version);
-	logx("current_session_id: %s", nxml->current_session_id ?: "NULL");
-	logx("current_serial: %lld", nxml->current_serial);
-	logx("session_id: %s", nxml->session_id ?: "NULL");
-	logx("serial: %lld", nxml->serial);
-	logx("snapshot_uri: %s", nxml->snapshot_uri ?: "NULL");
 }
 
 static void
@@ -421,6 +408,7 @@ notification_xml_elem_end(void *data, const char *el)
 		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
+#if 0
 /* XXXCJ this needs more cleanup and error checking */
 void
 save_notification_data(struct xmldata *xml_data)
@@ -445,7 +433,6 @@ save_notification_data(struct xmldata *xml_data)
 	fclose(f);
 }
 
-#if 0
 /* XXXCJ this needs more cleanup and error checking */
 static void
 fetch_existing_notification_data(struct xmldata *xml_data)
@@ -502,6 +489,19 @@ fetch_existing_notification_data(struct xmldata *xml_data)
 	fclose(f);
 }
 #endif
+
+void
+log_notification_xml(struct notification_xml *nxml)
+{
+	logx("scope: %d", nxml->scope);
+	logx("state: %d", nxml->state);
+	logx("version: %d", nxml->version);
+	logx("current_session_id: %s", nxml->current_session_id ?: "NULL");
+	logx("current_serial: %lld", nxml->current_serial);
+	logx("session_id: %s", nxml->session_id ?: "NULL");
+	logx("serial: %lld", nxml->serial);
+	logx("snapshot_uri: %s", nxml->snapshot_uri ?: "NULL");
+}
 
 struct notification_xml *
 new_notification_xml(XML_Parser p)
