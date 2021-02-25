@@ -323,9 +323,8 @@ http_ta_fetch(struct repo *rp)
 		err(1, "mkostempat: %s", rp->temp);
 		/* XXX switch to soft fail and restart with next file */
 	}
-	if (fchmod(filefd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) == -1)
-		warn("fchmod: %s", rp->temp);
-	
+	(void) fchmod(filefd, 0644);
+
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &rp->id, sizeof(rp->id));
