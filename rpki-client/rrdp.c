@@ -375,13 +375,28 @@ warnx("%s: INI: off we go", s->localdir);
 		if (s->state != PARSED)
 			errx(1, "bad internal state");
 
+
 		s->state = DONE;
 		if (status == 200) {
+			/* Finalize the parser */
+			if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
+				warnx("%s: parse error at line %lu: %s",
+				    s->localdir,
+				    XML_GetCurrentLineNumber(s->parser),
+				    XML_ErrorString(XML_GetErrorCode(s->parser))
+				    );
+				rrdp_failed(s);
+				break;
+			}
+
 			/* XXX process next */
 warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
     status, last_mod);
 if (s->task == NOTIFICATION) {
 log_notification_xml(s->nxml);
+free(s->session.last_mod);
+s->session.last_mod = last_mod;
+rrdp_state_save(s);
 s->sxml = new_snapshot_xml(s->parser, &s->session);
 s->task = SNAPSHOT;
 s->state = REQ;
@@ -493,20 +508,9 @@ proc_rrdp(int fd)
 					rrdp_failed(s);
 					continue;
 				}
-				if (s->task != NOTIFICATION)
-					SHA256_Update(&s->ctx, buf, len);
-				if (XML_Parse(p, buf, len, len == 0) !=
-				    XML_STATUS_OK) {
-					warnx("%s: parse error at line %lu: %s",
-					    s->localdir,
-					    XML_GetCurrentLineNumber(p),
-					    XML_ErrorString(XML_GetErrorCode(p))
-					    );
-					rrdp_failed(s);
-					continue;
-				}
-				/* parser stage finished */
+warnx("%s: GOT %zu bytes", s->localdir, len);
 				if (len == 0) {
+					/* parser stage finished */
 					close(s->infd);
 					s->infd = -1;
 
@@ -528,6 +532,20 @@ warnx("%s: XML hash valid", s->localdir);
 warnx("%s: XML file parsed", s->localdir);
 
 					s->state = PARSED;
+					continue;
+				}
+				/* parse and maybe hash the bytes just read */
+				if (s->task != NOTIFICATION)
+					SHA256_Update(&s->ctx, buf, len);
+				if (XML_Parse(p, buf, len, 0) !=
+				    XML_STATUS_OK) {
+					warnx("%s: parse error at line %lu: %s",
+					    s->localdir,
+					    XML_GetCurrentLineNumber(p),
+					    XML_ErrorString(XML_GetErrorCode(p))
+					    );
+					rrdp_failed(s);
+					continue;
 				}
 			}
 		}
