@@ -419,7 +419,8 @@ log_notification_xml(struct notification_xml *nxml)
 	logx("snapshot_uri: %s", nxml->snapshot_uri);
 
 /* XXX BLODDY HACK */
-	nxml->current->session_id = nxml->session_id;
+	free(nxml->current->session_id);
+	nxml->current->session_id = xstrdup(nxml->session_id);
 	nxml->current->serial = nxml->serial;
 
 }
@@ -450,7 +451,6 @@ free_notification_xml(struct notification_xml *nxml)
 
 	free(nxml->session_id);
 	free(nxml->snapshot_uri);
-	free(nxml->snapshot_hash);
 	while (!TAILQ_EMPTY(&nxml->delta_q)) {
 		struct delta_item *d = TAILQ_FIRST(&nxml->delta_q);
 		TAILQ_REMOVE(&nxml->delta_q, d, q);
