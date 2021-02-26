@@ -30,9 +30,6 @@
 #include "extern.h"
 #include "rrdp.h"
 
-/* notification */
-#define STATE_FILENAME ".state"
-
 enum notification_scope {
 	NOTIFICATION_SCOPE_START,
 	NOTIFICATION_SCOPE_NOTIFICATION,
@@ -463,12 +460,22 @@ const char *
 notification_get_next(struct notification_xml *nxml, char *hash, size_t hlen,
     int delta)
 {
+	struct delta_item *d;
+
 	if (!delta) {
 		assert(hlen == sizeof(nxml->snapshot_hash));
 		memcpy(hash, nxml->snapshot_hash, hlen);
 
 		return nxml->snapshot_uri;
 	} else {
+		d = TAILQ_FIRST(&nxml->delta_q);
+
+		assert(hlen == sizeof(d->hash));
+		memcpy(hash, d->hash, hlen);
+
+		/* can't remove the d element now since uri needs
+		 * to remain valid. Shit shit shit.
+		 */
 		errx(1, "NOT YET DONE");
 	}
 }
