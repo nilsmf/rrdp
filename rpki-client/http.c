@@ -55,6 +55,7 @@
 #include <limits.h>
 #include <netdb.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1144,6 +1145,8 @@ proc_http(char *bind_addr, int fd)
 
 	if (pledge("stdio inet dns recvfd", NULL) == -1)
 		err(1, "pledge");
+
+	signal(SIGPIPE, SIG_IGN);
 
 	memset(&http_conns, 0, sizeof(http_conns));
 	memset(&pfds, 0, sizeof(pfds));
