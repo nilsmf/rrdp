@@ -75,6 +75,7 @@ struct rrdp {
 	XML_Parser		 parser;
 	struct notification_xml	*nxml;
 	struct snapshot_xml	*sxml;
+	struct delta_xml	*dxml;
 };
 
 TAILQ_HEAD(,rrdp)	states = TAILQ_HEAD_INITIALIZER(states);
@@ -309,7 +310,7 @@ rrdp_free(struct rrdp *s)
 
 	free_notification_xml(s->nxml);
 	free_snapshot_xml(s->sxml);
-	/* XXX free_delta_xml(s->dxml); */
+	free_delta_xml(s->dxml);
 
 	if (s->infd != -1)
 		close(s->infd);
@@ -343,7 +344,7 @@ rrdp_failed(struct rrdp *s)
 	/* may need to do some cleanup in the repo here */
 	if (s->task == DELTA) {
 		/* fallback to a snapshot */
-		/* XXX free_delta_xml(s->dxml); */
+		free_delta_xml(s->dxml);
 		s->sxml = new_snapshot_xml(s->parser, &s->session);
 		s->task = SNAPSHOT;
 		s->state = REQ;
@@ -387,7 +388,7 @@ warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
 			errx(1, "expected fd not received");
 		s = rrdp_get(id);
 		if (s == NULL)
-			errx(1, "rrdp session %zu does not exist", id);
+			errx(1, "rrdp session %zu does not exist INI", id);
 		if (s->state != WAITING)
 			errx(1, "bad internal state");
 
@@ -403,7 +404,7 @@ warnx("%s: INI: off we go", s->localdir);
 
 		s = rrdp_get(id);
 		if (s == NULL)
-			errx(1, "rrdp session %zu does not exist", id);
+			errx(1, "rrdp session %zu does not exist FIN", id);
 		if (s->state == PARSING)
 			warnx("%s: parser not finished", s->localdir);
 		if (s->state != PARSED)
@@ -427,18 +428,30 @@ warnx("%s: INI: off we go", s->localdir);
 warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
     status, last_mod);
 if (s->task == NOTIFICATION) {
+long long serial = s->session.serial;
 log_notification_xml(s->nxml);
 free(s->session.last_mod);
 s->session.last_mod = last_mod;
 rrdp_state_save(s);
+if (serial == 0) {
 s->sxml = new_snapshot_xml(s->parser, &s->session);
 s->task = SNAPSHOT;
 s->state = REQ;
+} else if (s->session.serial == serial) {
+warnx("UP TO DATE - via serial");
+rrdp_free(s);
+rrdp_done(id, 1);
+} else {
+s->dxml = new_delta_xml(s->parser, &s->session);
+s->task = DELTA;
+s->state = REQ;
+}
 } else {
 rrdp_free(s);
 rrdp_done(id, 0);
 }
 		} else if (status == 304 && s->task == NOTIFICATION) {
+warnx("UP TO DATE - via 304");
 			rrdp_state_save(s);
 			rrdp_free(s);
 			rrdp_done(id, 1);
@@ -542,7 +555,6 @@ proc_rrdp(int fd)
 					rrdp_failed(s);
 					continue;
 				}
-warnx("%s: GOT %zu bytes", s->localdir, len);
 				if (len == 0) {
 					/* parser stage finished */
 					close(s->infd);
