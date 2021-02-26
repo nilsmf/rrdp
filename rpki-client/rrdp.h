@@ -26,6 +26,7 @@ struct opts {
 };
 
 char 	*xstrdup(const char *);
+int	 hex_to_bin(const char *, char *, size_t);
 
 FILE 		*open_primary_uri_read(char *, struct opts *);
 FILE 		*open_working_uri_read(char *, struct opts *);

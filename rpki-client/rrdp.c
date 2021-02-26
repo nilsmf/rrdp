@@ -18,6 +18,7 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -85,6 +86,39 @@ xstrdup(const char *s)
 	if ((r = strdup(s)) == NULL)
 		err(1, "strdup");
 	return r;
+}
+
+int
+hex_to_bin(const char *hexstr, char *buf, size_t len)
+{
+	unsigned char ch, r;
+	size_t pos = 0;
+	int i;
+
+	while (*hexstr) {
+		r = 0;
+		for (i = 0; i < 2; i++) {
+			ch = hexstr[i];
+			if (isdigit(ch))
+				ch -= '0';
+			else if (islower(ch))
+				ch -= ('a' - 10);
+			else if (isupper(ch))
+				ch -= ('A' - 10);
+			else
+				return -1;
+			if (ch > 0xf)
+				return -1;
+			r = r << 4 | ch;
+		}
+		if (pos < len)
+			buf[pos++] = r;
+		else
+			return -1;
+
+		hexstr += 2;
+	}
+	return 0;
 }
 
 /*
