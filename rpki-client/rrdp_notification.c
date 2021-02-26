@@ -76,10 +76,13 @@ add_delta(struct notification_xml *nxml, const char *uri,
 	if ((d = calloc(1, sizeof(struct delta_item))) == NULL)
 		err(1, "%s - calloc", __func__);
 
+	warnx("add delta %lld -> %s", serial, uri);
+
 	d->serial = serial;
 	d->uri = xstrdup(uri);
 	memcpy(d->hash, hash, sizeof(d->hash));
 
+	/* optimise for a sorted list */
 	n = TAILQ_LAST(&nxml->delta_q, delta_q);
 	if (n == NULL)
 		TAILQ_INSERT_HEAD(&nxml->delta_q, d, q);
@@ -315,6 +318,7 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 		if (add_delta(nxml, delta_uri, delta_hash, delta_serial) == 0)
 			PARSE_FAIL(p, "parse failed - adding delta failed");
 	}
+
 	nxml->scope = NOTIFICATION_SCOPE_DELTA;
 }
 
@@ -420,22 +424,23 @@ const char *
 notification_get_next(struct notification_xml *nxml, char *hash, size_t hlen,
     int delta)
 {
-	struct delta_item *d;
+	struct delta_item *d = NULL;
 
-	if (!delta) {
+	if (delta)
+		d = TAILQ_FIRST(&nxml->delta_q);
+	if (d == NULL) {
+		/* no delta - pull the snapshot */
 		assert(hlen == sizeof(nxml->snapshot_hash));
 		memcpy(hash, nxml->snapshot_hash, hlen);
 
 		return nxml->snapshot_uri;
 	} else {
-		d = TAILQ_FIRST(&nxml->delta_q);
-
 		assert(hlen == sizeof(d->hash));
 		memcpy(hash, d->hash, hlen);
 
 		/* can't remove the d element now since uri needs
 		 * to remain valid. Shit shit shit.
 		 */
-		errx(1, "NOT YET DONE");
+		return d->uri;
 	}
 }
