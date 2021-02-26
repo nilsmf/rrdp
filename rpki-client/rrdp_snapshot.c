@@ -36,6 +36,7 @@ enum snapshot_scope {
 struct snapshot_xml {
 	XML_Parser		 parser;
 	struct rrdp_session	*current;
+	struct rrdp		*rrdp;
 	struct publish_xml	*pxml;
 	char			*session_id;
 	long long		 serial;
@@ -134,7 +135,7 @@ end_publish_elem(struct snapshot_xml *sxml)
 		PARSE_FAIL(p, "parse failed - exited publish "
 		    "elem unexpectedely");
 
-	if (publish_xml_done(sxml->pxml) != 0)
+	if (publish_xml_done(sxml->rrdp, sxml->pxml) != 0)
 		PARSE_FAIL(p, "parse failed - bad publish elem");
 	sxml->pxml = NULL;
 
@@ -196,7 +197,7 @@ log_snapshot_xml(struct snapshot_xml *sxml)
 }
 
 struct snapshot_xml *
-new_snapshot_xml(XML_Parser p, struct rrdp_session *rs)
+new_snapshot_xml(XML_Parser p, struct rrdp_session *rs, struct rrdp *r)
 {
 	struct snapshot_xml *sxml;
 
@@ -204,6 +205,7 @@ new_snapshot_xml(XML_Parser p, struct rrdp_session *rs)
 		err(1, "%s", __func__);
 	sxml->parser = p;
 	sxml->current = rs;
+	sxml->rrdp = r;
 
 	if (XML_ParserReset(sxml->parser, NULL) != XML_TRUE)
 		errx(1, "%s: XML_ParserReset failed", __func__);

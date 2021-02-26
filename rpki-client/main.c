@@ -1487,8 +1487,11 @@ main(int argc, char *argv[])
 		 */
 		if ((pfd[3].revents & POLLIN)) {
 			enum rrdp_msg type;
+			enum publish_type pt;
 			struct rrdp_session s;
-			char *uri, *last_mod;
+			char *uri, *last_mod, *data;
+			char hash[SHA256_DIGEST_LENGTH];
+			size_t dsz;
 
 			io_simple_read(rrdp, &type, sizeof(type));
 			io_simple_read(rrdp, &i, sizeof(i));
@@ -1517,6 +1520,19 @@ main(int argc, char *argv[])
 				save_rrdp_state(&rt.repos[i], &s);
 				free(s.session_id);
 				free(s.last_mod);
+				break;
+			case RRDP_FILE:
+				io_simple_read(rrdp, &pt, sizeof(pt));
+				if (pt != PUB_ADD)
+					io_simple_read(rrdp, &hash,
+					    sizeof(hash));
+				io_str_read(rrdp, &uri);
+				io_buf_read_alloc(rrdp, (void **)&data, &dsz);
+
+warnx("%s: got [%d] %s", rt.repos[i].local, pt, uri);
+free(uri);
+free(data);
+
 				break;
 			default:
 				errx(1, "unexpected rrdp response");

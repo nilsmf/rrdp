@@ -37,6 +37,7 @@ enum delta_scope {
 struct delta_xml {
 	XML_Parser		 parser;
 	struct rrdp_session	*current;
+	struct rrdp		*rrdp;
 	struct publish_xml	*pxml;
 	char			*session_id;
 	long long		 serial;
@@ -113,6 +114,7 @@ start_publish_withdraw_elem(struct delta_xml *dxml, const char **attr,
 	XML_Parser p = dxml->parser;
 	char *uri, hash[SHA256_DIGEST_LENGTH];
 	int i, hasUri = 0, hasHash = 0;
+	enum publish_type pub = PUB_UPD;
 
 	if (dxml->scope != DELTA_SCOPE_DELTA)
 		PARSE_FAIL(p, "parse failed - entered publish/withdraw "
@@ -135,7 +137,11 @@ start_publish_withdraw_elem(struct delta_xml *dxml, const char **attr,
 	if (withdraw && hasHash != 1)
 		PARSE_FAIL(p, "parse failed - incomplete withdraw attributes");
 
-	dxml->pxml = new_publish_xml(withdraw ? PUB_DEL : PUB_ADD, uri, hash,
+	if (withdraw)
+		pub = PUB_DEL;
+	else if (hasHash == 0)
+		pub = PUB_ADD;
+	dxml->pxml = new_publish_xml(pub, uri, hash,
 	    hasHash ? sizeof(hash) : 0);
 	dxml->scope = DELTA_SCOPE_PUBLISH;
 }
@@ -149,7 +155,7 @@ end_publish_withdraw_elem(struct delta_xml *dxml, int withdraw)
 		PARSE_FAIL(p, "parse failed - exited publish/withdraw "
 		    "elem unexpectedely");
 
-	if (publish_xml_done(dxml->pxml) != 0)
+	if (publish_xml_done(dxml->rrdp, dxml->pxml) != 0)
 		PARSE_FAIL(p, "parse failed - bad publish/withdraw elem");
 	dxml->pxml = NULL;
 
@@ -218,7 +224,7 @@ log_delta_xml(struct delta_xml *dxml)
 }
 
 struct delta_xml *
-new_delta_xml(XML_Parser p, struct rrdp_session *rs)
+new_delta_xml(XML_Parser p, struct rrdp_session *rs, struct rrdp *r)
 {
 	struct delta_xml *dxml;
 
@@ -226,6 +232,7 @@ new_delta_xml(XML_Parser p, struct rrdp_session *rs)
 		err(1, "%s", __func__);
 	dxml->parser = p;
 	dxml->current = rs;
+	dxml->rrdp = r;
 
 	if (XML_ParserReset(dxml->parser, NULL) != XML_TRUE)
 		errx(1, "%s: XML_ParserReset failed", __func__);

@@ -63,9 +63,11 @@ struct rrdp {
 
 	struct pollfd		*pfd;
 	int			 infd;
-	int			 localfd;
 	enum rrdp_state		 state;
 	enum rrdp_task		 task;
+	int			 status;
+	unsigned int		 file_pending;
+	unsigned int		 file_failed;
 
 	char			 hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX		 ctx;
@@ -261,7 +263,7 @@ rrdp_failed(struct rrdp *s)
 	if (s->task == DELTA) {
 		/* fallback to a snapshot */
 		free_delta_xml(s->dxml);
-		s->sxml = new_snapshot_xml(s->parser, &s->session);
+		s->sxml = new_snapshot_xml(s->parser, &s->session, s);
 		s->task = SNAPSHOT;
 		s->state = REQ;
 	} else {
@@ -325,16 +327,25 @@ warnx("%s: INI: off we go", s->local);
 			errx(1, "rrdp session %zu does not exist FIN", id);
 		if (s->state == PARSING)
 			warnx("%s: parser not finished", s->local);
-
 		if (s->state == ERROR) {
 			warnx("%s: failed after XML parse error", s->local);
 			rrdp_failed(s);
+			free(last_mod);
 			break;
 		}
 		if (s->state != PARSED)
 			errx(1, "bad internal state");
+
+warnx("%s: FIN: status: %d last_mod: %s", s->local, status, last_mod);
+		s->status = status;
 		s->state = DONE;
-		if (status == 200) {
+		/* not all files have been validated and put in place */
+#ifdef NOTYET
+		if (s->file_pending > 0)
+			break;
+#endif
+done:
+		if (s->status == 200) {
 			/* Finalize the parser */
 			if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
 				warnx("%s: parse error at line %lu: %s",
@@ -346,9 +357,9 @@ warnx("%s: INI: off we go", s->local);
 				break;
 			}
 
+			/* XXX check file_failed > 0 */
+
 			/* XXX process next */
-warnx("%s: FIN: status: %d last_mod: %s", s->local,
-    status, last_mod);
 if (s->task == NOTIFICATION) {
 serial = s->session.serial;
 log_notification_xml(s->nxml);
@@ -356,7 +367,7 @@ free(s->session.last_mod);
 s->session.last_mod = last_mod;
 rrdp_state_send(s);
 if (serial == 0) {
-s->sxml = new_snapshot_xml(s->parser, &s->session);
+s->sxml = new_snapshot_xml(s->parser, &s->session, s);
 s->task = SNAPSHOT;
 s->state = REQ;
 } else if (s->session.serial == serial) {
@@ -364,7 +375,7 @@ warnx("UP TO DATE - via serial");
 rrdp_free(s);
 rrdp_done(id, 1);
 } else {
-s->dxml = new_delta_xml(s->parser, &s->session);
+s->dxml = new_delta_xml(s->parser, &s->session, s);
 s->task = DELTA;
 s->state = REQ;
 }
@@ -372,16 +383,29 @@ s->state = REQ;
 rrdp_free(s);
 rrdp_done(id, 0);
 }
-		} else if (status == 304 && s->task == NOTIFICATION) {
+
+
+		} else if (s->status == 304 && s->task == NOTIFICATION) {
 warnx("UP TO DATE - via 304");
 			rrdp_state_send(s);
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
 			warnx("%s: failed with HTTP status %d", s->local,
-			    status);
+			    s->status);
 			rrdp_failed(s);
 		}
+		break;
+	case RRDP_FILE:
+		s = rrdp_get(id);
+		if (s == NULL)
+			errx(1, "rrdp session %zu does not exist FIN", id);
+		io_simple_read(fd, &status, sizeof(status));
+		if (status == 0)
+			s->file_failed++;
+		s->file_pending--;
+		if (s->file_pending == 0 && s->state == DONE)
+			goto done;
 		break;
 	default:
 		errx(1, "unexpected message %d", type);
@@ -574,9 +598,31 @@ publish_xml_add_content(struct publish_xml *pxml, const char *buf, int length)
 }
 
 int
-publish_xml_done(struct publish_xml *pxml)
+publish_xml_done(struct rrdp *s, struct publish_xml *pxml)
 {
-	/* TODO send it to main proc for inspection */
+	enum rrdp_msg type = RRDP_FILE;
+	struct ibuf *b;
+	unsigned char *data;
+	size_t datasz;
+
+	if ((base64_decode(pxml->data, &data, &datasz)) == -1) {
+		warnx("bad base64 encoding");
+		return -1;
+	}
+
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &s->id, sizeof(s->id));
+	io_simple_buffer(b, &pxml->type, sizeof(pxml->type));
+	if (pxml->type != PUB_ADD)
+		io_simple_buffer(b, &pxml->hash, sizeof(pxml->hash));
+	io_str_buffer(b, pxml->uri);
+	io_buf_buffer(b, data, datasz);
+	ibuf_close(&msgq, b);
+	s->file_pending++;
+
+	free(data);
 	free_publish_xml(pxml);
 	return 0;
 }

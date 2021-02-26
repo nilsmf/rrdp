@@ -270,6 +270,7 @@ enum rtype {
 enum rrdp_msg {
 	RRDP_START,
 	RRDP_SESSION,
+	RRDP_FILE,
 	RRDP_END,
 	RRDP_HTTP_REQ,
 	RRDP_HTTP_INI,
@@ -283,6 +284,15 @@ struct rrdp_session {
 	char			*last_mod;
 	char			*session_id;
 	long long		 serial;
+};
+
+/*
+ * File types used in RRDP_FILE messages.
+ */
+enum publish_type {
+	PUB_ADD,
+	PUB_UPD,
+	PUB_DEL,
 };
 
 /*
