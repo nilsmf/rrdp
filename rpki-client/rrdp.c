@@ -617,10 +617,3 @@ add_to_file_list(struct file_list *file_list, const char *filename,
     int withdraw, int check_duplicates)
 {
 }
-
-int
-fetch_uri_data(char *uri, char *hash, char *modified_since, struct opts *opts,
-    XML_Parser p)
-{
-	return -1;
-}
