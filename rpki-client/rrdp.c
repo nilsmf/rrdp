@@ -47,6 +47,7 @@ enum rrdp_state {
 	WAITING,
 	PARSING,
 	PARSED,
+	ERROR,
 	DONE,
 };
 enum rrdp_task {
@@ -407,10 +408,14 @@ warnx("%s: INI: off we go", s->localdir);
 			errx(1, "rrdp session %zu does not exist FIN", id);
 		if (s->state == PARSING)
 			warnx("%s: parser not finished", s->localdir);
+
+		if (s->state == ERROR) {
+			warnx("%s: failed after XML parse error", s->localdir);
+			rrdp_failed(s);
+			break;
+		}
 		if (s->state != PARSED)
 			errx(1, "bad internal state");
-
-
 		s->state = DONE;
 		if (status == 200) {
 			/* Finalize the parser */
@@ -546,15 +551,14 @@ proc_rrdp(int fd)
 				XML_Parser p = s->parser;
 				ssize_t len;
 
-				if (s->state != PARSING)
-					errx(1, "bad parser state");
-
 				len = read(s->infd, buf, sizeof(buf));
 				if (len == -1) {
 					warn("%s: read failure", s->localdir);
 					rrdp_failed(s);
 					continue;
 				}
+				if (s->state != PARSING && s->state != ERROR)
+					errx(1, "bad parser state");
 				if (len == 0) {
 					/* parser stage finished */
 					close(s->infd);
@@ -583,15 +587,15 @@ warnx("%s: XML file parsed", s->localdir);
 				/* parse and maybe hash the bytes just read */
 				if (s->task != NOTIFICATION)
 					SHA256_Update(&s->ctx, buf, len);
-				if (XML_Parse(p, buf, len, 0) !=
+				if (s->state == PARSING &&
+				    XML_Parse(p, buf, len, 0) !=
 				    XML_STATUS_OK) {
 					warnx("%s: parse error at line %lu: %s",
 					    s->localdir,
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
 					    );
-					rrdp_failed(s);
-					continue;
+					s->state = ERROR;
 				}
 			}
 		}
