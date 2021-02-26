@@ -186,10 +186,9 @@ start_notification_elem(struct notification_xml *nxml, const char **attr)
 	int has_xmlns = 0;
 	size_t i;
 
-	if (nxml->scope != NOTIFICATION_SCOPE_START) {
-		PARSE_FAIL(p, "parse failed - entered notification "
-		    "elem unexpectedely");
-	}
+	if (nxml->scope != NOTIFICATION_SCOPE_START)
+		PARSE_FAIL(p,
+		    "parse failed - entered notification elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		const char *errstr;
 		if (strcmp("xmlns", attr[i]) == 0) {
@@ -215,10 +214,9 @@ start_notification_elem(struct notification_xml *nxml, const char **attr)
 		PARSE_FAIL(p, "parse failed - non conforming "
 		    "attribute found in notification elem");
 	}
-	if (!(has_xmlns && nxml->version && nxml->session_id && nxml->serial)) {
+	if (!(has_xmlns && nxml->version && nxml->session_id && nxml->serial))
 		PARSE_FAIL(p, "parse failed - incomplete "
 		    "notification attributes");
-	}
 
 	check_state(nxml);
 	nxml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
@@ -229,10 +227,9 @@ end_notification_elem(struct notification_xml *nxml)
 {
 	XML_Parser p = nxml->parser;
 
-	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
 		PARSE_FAIL(p, "parse failed - exited notification "
 		    "elem unexpectedely");
-	}
 	nxml->scope = NOTIFICATION_SCOPE_END;
 	/* check the state to see if we have enough delta info */
 	check_state(nxml);
@@ -244,10 +241,9 @@ start_snapshot_elem(struct notification_xml *nxml, const char **attr)
 	XML_Parser p = nxml->parser;
 	int i, hasUri = 0, hasHash = 0;
 
-	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION) {
-		PARSE_FAIL(p, "parse failed - entered snapshot "
-		    "elem unexpectedely");
-	}
+	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION)
+		PARSE_FAIL(p,
+		    "parse failed - entered snapshot elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
 			nxml->snapshot_uri = xstrdup(attr[i+1]);
@@ -272,10 +268,9 @@ end_snapshot_elem(struct notification_xml *nxml)
 {
 	XML_Parser p = nxml->parser;
 
-	if (nxml->scope != NOTIFICATION_SCOPE_SNAPSHOT) {
+	if (nxml->scope != NOTIFICATION_SCOPE_SNAPSHOT)
 		PARSE_FAIL(p, "parse failed - exited snapshot "
 		    "elem unexpectedely");
-	}
 	nxml->scope = NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT;
 }
 
@@ -288,10 +283,9 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 	char delta_hash[SHA256_DIGEST_LENGTH];
 	long long delta_serial = 0;
 
-	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT) {
+	if (nxml->scope != NOTIFICATION_SCOPE_NOTIFICATION_POST_SNAPSHOT)
 		PARSE_FAIL(p, "parse failed - entered delta "
 		    "elem unexpectedely");
-	}
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
 			delta_uri = attr[i+1];
