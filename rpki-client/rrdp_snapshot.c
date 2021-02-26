@@ -88,10 +88,9 @@ start_snapshot_elem(struct snapshot_xml *sxml, const char **attr)
 	int has_xmlns = 0;
 	int i;
 
-	if (sxml->scope != SNAPSHOT_SCOPE_NONE) {
+	if (sxml->scope != SNAPSHOT_SCOPE_NONE)
 		PARSE_FAIL(p,
 		    "parse failed - entered snapshot elem unexpectedely");
-	}
 	for (i = 0; attr[i]; i += 2) {
 		const char *errstr;
 		if (strcmp("xmlns", attr[i]) == 0) {
@@ -118,10 +117,9 @@ start_snapshot_elem(struct snapshot_xml *sxml, const char **attr)
 		    "parse failed - non conforming "
 		    "attribute found in snapshot elem");
 	}
-	if (!(has_xmlns && sxml->version && sxml->session_id && sxml->serial)) {
+	if (!(has_xmlns && sxml->version && sxml->session_id && sxml->serial))
 		PARSE_FAIL(p,
 		    "parse failed - incomplete snapshot attributes");
-	}
 	if (strcmp(sxml->current->session_id, sxml->session_id) != 0)
 		PARSE_FAIL(p, "parse failed - session_id mismatch");
 	if (sxml->current->serial != sxml->serial)
@@ -135,10 +133,9 @@ end_snapshot_elem(struct snapshot_xml *sxml)
 {
 	XML_Parser p = sxml->parser;
 
-	if (sxml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
+	if (sxml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 		PARSE_FAIL(p, "parse failed - exited snapshot "
 		    "elem unexpectedely");
-	}
 	sxml->scope = SNAPSHOT_SCOPE_END;
 }
 
@@ -148,10 +145,9 @@ start_publish_elem(struct snapshot_xml *sxml, const char **attr)
 	XML_Parser p = sxml->parser;
 	int i;
 
-	if (sxml->scope != SNAPSHOT_SCOPE_SNAPSHOT) {
-		PARSE_FAIL(p, "parse failed - entered publish "
-		    "elem unexpectedely");
-	}
+	if (sxml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
+		PARSE_FAIL(p,
+		    "parse failed - entered publish elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0) {
 			sxml->publish_uri = xstrdup(attr[i+1]);
@@ -170,14 +166,12 @@ end_publish_elem(struct snapshot_xml *sxml)
 {
 	XML_Parser p = sxml->parser;
 
-	if (sxml->scope != SNAPSHOT_SCOPE_PUBLISH) {
+	if (sxml->scope != SNAPSHOT_SCOPE_PUBLISH)
 		PARSE_FAIL(p, "parse failed - exited publish "
 		    "elem unexpectedely");
-	}
-	if (!sxml->publish_uri) {
+	if (!sxml->publish_uri)
 		PARSE_FAIL(p, "parse failed - no data recovered "
 		    "from publish elem");
-	}
 
 	write_snapshot_publish(sxml);
 
@@ -195,14 +189,14 @@ snapshot_xml_elem_start(void *data, const char *el, const char **attr)
 	 * NONE scope
 	 */
 	if (strcmp("snapshot", el) == 0)
-		start_snapshot_elem(data, attr);
+		start_snapshot_elem(sxml, attr);
 	/*
 	 * Will enter here multiple times, BUT never nested. will start
 	 * collecting character data in that handler mem is cleared in end
 	 * block, (TODO or on parse failure)
 	 */
 	else if (strcmp("publish", el) == 0)
-		start_publish_elem(data, attr);
+		start_publish_elem(sxml, attr);
 	else
 		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
@@ -214,9 +208,9 @@ snapshot_xml_elem_end(void *data, const char *el)
 	XML_Parser p = sxml->parser;
 
 	if (strcmp("snapshot", el) == 0)
-		end_snapshot_elem(data);
+		end_snapshot_elem(sxml);
 	else if (strcmp("publish", el) == 0)
-		end_publish_elem(data);
+		end_publish_elem(sxml);
 	else
 		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
