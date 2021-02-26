@@ -57,6 +57,7 @@ enum validate_return {
 };
 
 
+#ifdef NOTYET
 static enum validate_return
 validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
     int primary)
@@ -96,10 +97,12 @@ validate_publish_hash(struct delta_xml *delta_xml, struct opts *opts,
 		return VALIDATE_RETURN_HASH_MATCH;
 	return VALIDATE_RETURN_HASH_MISMATCH;
 }
+#endif
 
 static int
 verify_publish(struct delta_xml *dxml)
 {
+#ifdef NOTYET
 	enum validate_return v_return;
 
 	/* Check working dir first */
@@ -122,6 +125,8 @@ verify_publish(struct delta_xml *dxml)
 		return 1;
 	warnx("found file but without hash");
 	return 0;
+#endif
+	return 1;
 }
 
 static void
@@ -265,8 +270,8 @@ end_publish_withdraw_elem(struct delta_xml *dxml, int withdraw)
 	 * staging file?
 	 */
 	if (verify_publish(dxml) == 0)
-		PARSE_FAIL(p, "failed to verify delta hash:\n%s\n%s",
-		    dxml->publish_hash, dxml->publish_uri);
+		PARSE_FAIL(p, "failed to verify delta hash for %s",
+		    dxml->publish_uri);
 	write_delta(dxml, withdraw);
 
 	dxml->scope = DELTA_SCOPE_DELTA;
