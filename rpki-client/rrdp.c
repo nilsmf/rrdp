@@ -39,8 +39,6 @@
 #define MAX_SESSIONS	12
 #define	READ_BUF_SIZE	(32 * 1024)
 
-#define STATE_FILENAME	".state"
-
 static struct msgbuf	msgq;
 
 enum rrdp_state {
@@ -61,8 +59,7 @@ struct rrdp {
 	TAILQ_ENTRY(rrdp)	 entry;
 	size_t			 id;
 	char			*notifyuri;
-	char			*repouri;
-	char			*localdir;
+	char			*local;
 
 	struct pollfd		*pfd;
 	int			 infd;
@@ -174,130 +171,40 @@ rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 }
 
 /*
- * Parse the RRDP state file if it exists and set the session struct
- * based on that information.
+ * Send the session state to the main process so it gets stored.
  */
 static void
-rrdp_state_get(struct rrdp *s)
+rrdp_state_send(struct rrdp *s)
 {
-	FILE *f;
-	int fd, ln = 0;
-	const char *errstr;
-	char *line = NULL;
-	size_t len = 0;
-	ssize_t n;
+	enum rrdp_msg type = RRDP_SESSION;
+	struct ibuf *b;
 
-	if ((fd = openat(s->localfd, STATE_FILENAME, O_RDONLY)) == -1) {
-//		if (errno != ENOENT)
-			warn("%s: open state file", s->localdir);
-		return;
-	}
-	f = fdopen(fd, "r");
-	if (f == NULL)
-		err(1, "fdopen");
-
-	while ((n = getline(&line, &len, f)) != -1) {
-		if (line[n - 1] == '\n')
-			line[n - 1] = '\0';
-		switch (ln) {
-		case 0:
-			s->session.session_id = xstrdup(line);
-			break;
-		case 1:
-			s->session.serial = strtonum(line, 1, LLONG_MAX,
-			    &errstr);
-			if (errstr)
-				goto fail;
-			break;
-		case 2:
-			s->session.last_mod = xstrdup(line);
-			break;
-		default:
-			goto fail;
-		}
-		ln++;
-	}
-
-warnx("%s: GOT session_id: %s serial: %lld last_mod: %s", s->localdir,
-s->session.session_id, s->session.serial, s->session.last_mod);
-
-	free(line);
-	if (ferror(f))
-		goto fail;
-	fclose(f);
-	return;
-
-fail:
-	warnx("%s: troubles reading state file", s->localdir);
-	fclose(f);
-	free(s->session.session_id);
-	free(s->session.last_mod);
-	memset(&s->session, 0, sizeof(s->session));
-}
-
-/*
- * Carefully write the RRDP session state file back.
- */
-static void
-rrdp_state_save(struct rrdp *s)
-{
-	char *temp;
-	FILE *f;
-	int fd;
-
-warnx("%s: SAVE session_id: %s serial: %lld last_mod: %s", s->localdir,
-s->session.session_id, s->session.serial, s->session.last_mod);
-
-	if (asprintf(&temp, "%s.XXXXXXXX", STATE_FILENAME) == -1)
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
-
-	if ((fd = mkostempat(s->localfd, temp, O_CLOEXEC)) == -1)
-		err(1, "%s: mkostempat: %s", s->localdir, temp);
-	(void) fchmod(fd, 0644);
-	f = fdopen(fd, "w");
-	if (f == NULL)
-		err(1, "fdopen");
-
-	/* write session state file out */
-	if (fprintf(f, "%s\n%lld\n%s\n", s->session.session_id,
-	    s->session.serial, s->session.last_mod) < 0) {
-		fclose(f);
-		goto fail;
-	}
-	if (fclose(f) != 0)
-		goto fail;
-
-	if (renameat(s->localfd, temp, s->localfd, STATE_FILENAME) == -1)
-		warn("%s: rename state file", s->localdir);
-	free(temp);
-	return;
-
-fail:
-	warnx("%s: failed to save state", s->localdir);
-	unlinkat(s->localfd, temp, 0);
-	free(temp);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &s->id, sizeof(s->id));
+	io_str_buffer(b, s->session.session_id);
+	io_simple_buffer(b, &s->session.serial, sizeof(s->session.serial));
+	io_str_buffer(b, s->session.last_mod);
+	ibuf_close(&msgq, b);
 }
 
 static struct rrdp *
-rrdp_new(size_t id, char *local, char *notify, char *repo)
+rrdp_new(size_t id, char *local, char *notify, char *session_id,
+    long long serial, char *last_mod)
 {
 	struct rrdp *s;
-	int lfd;
-
-	if ((lfd = open(local, O_RDONLY, 0)) == -1)
-		err(1, "base directory %s", local);
 
 	if ((s = calloc(1, sizeof(*s))) == NULL)
 		err(1, NULL);
 
 	s->infd = -1;
 	s->id = id;
-	s->localdir = local;
-	s->localfd = lfd;
+	s->local = local;
 	s->notifyuri = notify;
-	s->repouri = repo;
-
-	rrdp_state_get(s);
+	s->session.session_id = session_id;
+	s->session.serial = serial;
+	s->session.last_mod = last_mod;
 
 	s->state = REQ;
 	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
@@ -327,8 +234,7 @@ rrdp_free(struct rrdp *s)
 	if (s->parser)
 		XML_ParserFree(s->parser);
 	free(s->notifyuri);
-	free(s->repouri);
-	free(s->localdir);
+	free(s->local);
 	free(s->session.last_mod);
 	free(s->session.session_id);
 
@@ -369,11 +275,12 @@ rrdp_failed(struct rrdp *s)
 }
 
 static void
-rrdp_input(int fd)
+rrdp_input_handler(int fd)
 {
-	char *local, *notifyuri, *repouri, *last_mod;
+	char *local, *notify, *session_id, *last_mod;
 	struct rrdp *s;
 	enum rrdp_msg type;
+	long long serial;
 	size_t id;
 	int infd, status;
 
@@ -383,15 +290,16 @@ rrdp_input(int fd)
 	switch (type) {
 	case RRDP_START:
 		io_str_read(fd, &local);
-		io_str_read(fd, &notifyuri);
-		io_str_read(fd, &repouri);
+		io_str_read(fd, &notify);
+		io_str_read(fd, &session_id);
+		io_simple_read(fd, &serial, sizeof(serial));
+		io_str_read(fd, &last_mod);
 		if (infd != -1)
 			errx(1, "received unexpected fd");
 
-		s = rrdp_new(id, local, notifyuri, repouri);
+		s = rrdp_new(id, local, notify, session_id, serial, last_mod);
 
-warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
-    local, notifyuri, repouri);
+warnx("GOT: local:%s\nnotify: %s", local, notify);
 		break;
 	case RRDP_HTTP_INI:
 		if (infd == -1)
@@ -404,7 +312,7 @@ warnx("GOT:\nlocal\t%s\nnotify\t%s\nrepo\t%s\n",
 
 		s->infd = infd;
 		s->state = PARSING;
-warnx("%s: INI: off we go", s->localdir);
+warnx("%s: INI: off we go", s->local);
 		break;
 	case RRDP_HTTP_FIN:
 		io_simple_read(fd, &status, sizeof(status));
@@ -416,10 +324,10 @@ warnx("%s: INI: off we go", s->localdir);
 		if (s == NULL)
 			errx(1, "rrdp session %zu does not exist FIN", id);
 		if (s->state == PARSING)
-			warnx("%s: parser not finished", s->localdir);
+			warnx("%s: parser not finished", s->local);
 
 		if (s->state == ERROR) {
-			warnx("%s: failed after XML parse error", s->localdir);
+			warnx("%s: failed after XML parse error", s->local);
 			rrdp_failed(s);
 			break;
 		}
@@ -430,7 +338,7 @@ warnx("%s: INI: off we go", s->localdir);
 			/* Finalize the parser */
 			if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
 				warnx("%s: parse error at line %lu: %s",
-				    s->localdir,
+				    s->local,
 				    XML_GetCurrentLineNumber(s->parser),
 				    XML_ErrorString(XML_GetErrorCode(s->parser))
 				    );
@@ -439,14 +347,14 @@ warnx("%s: INI: off we go", s->localdir);
 			}
 
 			/* XXX process next */
-warnx("%s: FIN: status: %d last_mod: %s", s->localdir,
+warnx("%s: FIN: status: %d last_mod: %s", s->local,
     status, last_mod);
 if (s->task == NOTIFICATION) {
-long long serial = s->session.serial;
+serial = s->session.serial;
 log_notification_xml(s->nxml);
 free(s->session.last_mod);
 s->session.last_mod = last_mod;
-rrdp_state_save(s);
+rrdp_state_send(s);
 if (serial == 0) {
 s->sxml = new_snapshot_xml(s->parser, &s->session);
 s->task = SNAPSHOT;
@@ -466,11 +374,11 @@ rrdp_done(id, 0);
 }
 		} else if (status == 304 && s->task == NOTIFICATION) {
 warnx("UP TO DATE - via 304");
-			rrdp_state_save(s);
+			rrdp_state_send(s);
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
-			warnx("%s: failed with HTTP status %d", s->localdir,
+			warnx("%s: failed with HTTP status %d", s->local,
 			    status);
 			rrdp_failed(s);
 		}
@@ -488,7 +396,7 @@ proc_rrdp(int fd)
 	struct rrdp *s, *ns;
 	size_t i;
 
-	if (pledge("stdio rpath wpath cpath fattr recvfd", NULL) == -1)
+	if (pledge("stdio recvfd", NULL) == -1)
 		err(1, "pledge");
 
 	memset(&pfds, 0, sizeof(pfds));
@@ -551,7 +459,7 @@ proc_rrdp(int fd)
 			}
 		}
 		if (pfds[0].revents & POLLIN)
-			rrdp_input(fd);
+			rrdp_input_handler(fd);
 
 		TAILQ_FOREACH_SAFE(s, &states, entry, ns) {
 			if (s->pfd == NULL)
@@ -562,7 +470,7 @@ proc_rrdp(int fd)
 
 				len = read(s->infd, buf, sizeof(buf));
 				if (len == -1) {
-					warn("%s: read failure", s->localdir);
+					warn("%s: read failure", s->local);
 					rrdp_failed(s);
 					continue;
 				}
@@ -581,14 +489,14 @@ proc_rrdp(int fd)
 						    sizeof(s->hash)) != 0) {
 							warnx("%s: bad message "
 							   "digest",
-							   s->localdir);
+							   s->local);
 
 							rrdp_failed(s);
 							continue;
 						}
-warnx("%s: XML hash valid", s->localdir);
+warnx("%s: XML hash valid", s->local);
 					}
-warnx("%s: XML file parsed", s->localdir);
+warnx("%s: XML file parsed", s->local);
 
 					s->state = PARSED;
 					continue;
@@ -600,7 +508,7 @@ warnx("%s: XML file parsed", s->localdir);
 				    XML_Parse(p, buf, len, 0) !=
 				    XML_STATUS_OK) {
 					warnx("%s: parse error at line %lu: %s",
-					    s->localdir,
+					    s->local,
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
 					    );

@@ -268,6 +268,198 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
 }
 
 /*
+ * Build local file name base on the URI and the repo info.
+ */
+static char *
+repo_filename(const struct repo *repo, const char *uri)
+{
+	char *nfile;
+
+	if (strstr(uri, repo->repouri) != uri)
+		errx(1, "%s: URI outside of repository", uri);
+	uri += strlen(repo->repouri) + 1;	/* skip base and '/' */
+
+	if (asprintf(&nfile, "%s/%s", repo->local, uri) == -1)
+		err(1, "asprintf");
+	return nfile;
+}
+
+/*
+ * Build TA file name based on the repo info.
+ * If temp is set add Xs for mkostempat.
+ */
+static char *
+ta_filename(const struct repo *repo, int temp)
+{
+	const char *file;
+	char *nfile;
+
+	/* does not matter which URI, all end with same filename */
+	file = strrchr(repo->uris[0], '/');
+	assert(file);
+
+	if (asprintf(&nfile, "%s%s%s", repo->local, file,
+	    temp ? ".XXXXXXXX": "") == -1)
+		err(1, "asprintf");
+
+	return nfile;
+}
+
+static char *
+rrdp_state_filename(const struct repo *repo, int temp)
+{
+	char *nfile;
+
+	if (asprintf(&nfile, "%s/.state%s", repo->local,
+	    temp ? ".XXXXXXXX": "") == -1)
+		err(1, "asprintf");
+
+	return nfile;
+}
+
+/* RRDP specific functions */
+
+/*
+ * Parse the RRDP state file if it exists and set the session struct
+ * based on that information.
+ */
+static void
+parse_rrdp_state(const struct repo *r, struct rrdp_session *state)
+{
+	FILE *f;
+	int fd, ln = 0;
+	const char *errstr;
+	char *line = NULL, *file;
+	size_t len = 0;
+	ssize_t n;
+
+	file = rrdp_state_filename(r, 0);
+	if ((fd = openat(cachefd, file, O_RDONLY)) == -1) {
+		free(file);
+		if (errno != ENOENT)
+			warn("%s: open state file", r->local);
+		return;
+	}
+	free(file);
+	f = fdopen(fd, "r");
+	if (f == NULL)
+		err(1, "fdopen");
+
+	while ((n = getline(&line, &len, f)) != -1) {
+		if (line[n - 1] == '\n')
+			line[n - 1] = '\0';
+		switch (ln) {
+		case 0:
+			if ((state->session_id = strdup(line)) == NULL)
+				err(1, "%s", __func__);
+			break;
+		case 1:
+			state->serial = strtonum(line, 1, LLONG_MAX, &errstr);
+			if (errstr)
+				goto fail;
+			break;
+		case 2:
+			if ((state->last_mod = strdup(line)) == NULL)
+				err(1, "%s", __func__);
+			break;
+		default:
+			goto fail;
+		}
+		ln++;
+	}
+
+warnx("%s: GOT session_id: %s serial: %lld last_mod: %s", r->local,
+state->session_id, state->serial, state->last_mod);
+
+	free(line);
+	if (ferror(f))
+		goto fail;
+	fclose(f);
+	return;
+
+fail:
+	warnx("%s: troubles reading state file", r->local);
+	fclose(f);
+	free(state->session_id);
+	free(state->last_mod);
+	memset(state, 0, sizeof(*state));
+}
+
+/*
+ * RRDP fetch finalized, either with or without success.
+ */
+static int
+rrdp_done(struct repo *rp, int ok)
+{
+	if (ok) {
+		logx("%s: loaded from network", rp->local);
+	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
+	    rp->uris[rp->uriidx + 1] != NULL) {
+		logx("%s: load from network failed, retry", rp->local);
+
+		rp->uriidx++;
+		repo_fetch(rp);
+		return 0;
+	} else {
+		logx("%s: load from network failed, "
+		    "fallback to cache", rp->local);
+	}
+	return 1;
+}
+
+/*
+ * Carefully write the RRDP session state file back.
+ */
+static void
+save_rrdp_state(const struct repo *r, struct rrdp_session *state)
+{
+	char *temp, *file;
+	FILE *f;
+	int fd;
+
+warnx("%s: SAVE session_id: %s serial: %lld last_mod: %s", r->local,
+state->session_id, state->serial, state->last_mod);
+
+	file = rrdp_state_filename(r, 0);
+	temp = rrdp_state_filename(r, 1);
+
+	if ((fd = mkostempat(cachefd, temp, O_CLOEXEC)) == -1)
+		err(1, "%s: mkostempat: %s", r->local, temp);
+	(void) fchmod(fd, 0644);
+	f = fdopen(fd, "w");
+	if (f == NULL)
+		err(1, "fdopen");
+
+	/* write session state file out */
+	if (fprintf(f, "%s\n%lld\n", state->session_id,
+	    state->serial) < 0) {
+		fclose(f);
+		goto fail;
+	}
+	if (state->last_mod != NULL) {
+		if (fprintf(f, "%s\n", state->last_mod) < 0) {
+			fclose(f);
+			goto fail;
+		}
+	}
+	if (fclose(f) != 0)
+		goto fail;
+
+	if (renameat(cachefd, temp, cachefd, file) == -1)
+		warn("%s: rename state file", r->local);
+
+	free(temp);
+	free(file);
+	return;
+
+fail:
+	warnx("%s: failed to save state", r->local);
+	unlinkat(cachefd, temp, 0);
+	free(temp);
+	free(file);
+}
+
+/*
  * Allocat a new repository be extending the repotable.
  */
 static struct repo *
@@ -286,6 +478,10 @@ repo_alloc(void)
 	return rp;
 }
 
+/*
+ * Request some XML file on behalf of the rrdp parser.
+ * Create a pipe and pass the pipe endpoints to the http and rrdp process.
+ */
 static void
 http_rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 {
@@ -313,6 +509,10 @@ http_rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 	ibuf_close(&httpq, b2);
 }
 
+/*
+ * Request a TA certificate, write it to a temporary file and rename
+ * it into place on success.
+ */
 static void
 http_ta_fetch(struct repo *rp)
 {
@@ -339,8 +539,13 @@ http_ta_fetch(struct repo *rp)
 	ibuf_close(&httpq, b);
 }
 
+/*
+ * Handle responses from the http process. For TA file, either rename
+ * or delete the temporary file. For RRDP requests relay the request
+ * over to the rrdp process.
+ */
 static int
-http_done(struct repo *rp, int ok, int final, int status, char *last_mod)
+http_done(struct repo *rp, int ok, int status, char *last_mod)
 {
 	struct ibuf	*b;
 	enum rrdp_msg	type = RRDP_HTTP_FIN;
@@ -376,32 +581,15 @@ http_done(struct repo *rp, int ok, int final, int status, char *last_mod)
 		return 1;
 	}
 
-	if (!final) {
-		/* RRDP request, relay response over to the rrdp process */
-		if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
-			err(1, NULL);
-		io_simple_buffer(b, &type, sizeof(type));
-		io_simple_buffer(b, &rp->id, sizeof(rp->id));
-		io_simple_buffer(b, &status, sizeof(status));
-		io_str_buffer(b, last_mod);
-		ibuf_close(&rrdpq, b);
-		return 0;
-	}
-
-	if (ok) {
-		logx("%s: loaded from network", rp->local);
-	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
-	    rp->uris[rp->uriidx + 1] != NULL) {
-		logx("%s: load from network failed, retry", rp->local);
-
-		rp->uriidx++;
-		repo_fetch(rp);
-		return 0;
-	} else {
-		logx("%s: load from network failed, "
-		    "fallback to cache", rp->local);
-	}
-	return 1;
+	/* RRDP request, relay response over to the rrdp process */
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &rp->id, sizeof(rp->id));
+	io_simple_buffer(b, &status, sizeof(status));
+	io_str_buffer(b, last_mod);
+	ibuf_close(&rrdpq, b);
+	return 0;
 }
 
 static void
@@ -444,6 +632,9 @@ repo_fetch(struct repo *rp)
 			http_ta_fetch(rp);
 		} else {
 			enum rrdp_msg type = RRDP_START;
+			struct rrdp_session state = { 0 };
+
+			parse_rrdp_state(rp, &state);
 
 			if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 				err(1, NULL);
@@ -451,8 +642,14 @@ repo_fetch(struct repo *rp)
 			io_simple_buffer(b, &rp->id, sizeof(rp->id));
 			io_str_buffer(b, rp->local);
 			io_str_buffer(b, rp->uris[rp->uriidx]);
-			io_str_buffer(b, rp->repouri);
+			io_str_buffer(b, state.session_id);
+			io_simple_buffer(b, &state.serial,
+			    sizeof(state.serial));
+			io_str_buffer(b, state.last_mod);
 			ibuf_close(&rrdpq, b);
+
+			free(state.session_id);
+			free(state.last_mod);
 		}
 	}
 }
@@ -527,40 +724,6 @@ repo_lookup(const char *uri, const char *notify)
 
 	repo_fetch(rp);
 	return rp;
-}
-
-static char *
-ta_filename(const struct repo *repo, int temp)
-{
-	const char *file;
-	char *nfile;
-
-	/* does not matter which URI, all end with same filename */
-	file = strrchr(repo->uris[0], '/');
-	assert(file);
-
-	if (asprintf(&nfile, "%s%s%s", repo->local, file,
-	    temp ? ".XXXXXXXX": "") == -1)
-		err(1, "asprintf");
-
-	return nfile;
-}
-
-/*
- * Build local file name base on the URI and the repo info.
- */
-static char *
-repo_filename(const struct repo *repo, const char *uri)
-{
-	char *nfile;
-
-	if (strstr(uri, repo->repouri) != uri)
-		errx(1, "%s: URI outside of repository", uri);
-	uri += strlen(repo->repouri) + 1;	/* skip base and '/' */
-
-	if (asprintf(&nfile, "%s/%s", repo->local, uri) == -1)
-		err(1, "asprintf");
-	return nfile;
 }
 
 /*
@@ -1171,8 +1334,7 @@ main(int argc, char *argv[])
 			if (fchdir(cachefd) == -1)
 				err(1, "fchdir");
 
-			if (pledge("stdio rpath wpath cpath recvfd fattr unveil",
-			    NULL) == -1)
+			if (pledge("stdio recvfd", NULL) == -1)
 				err(1, "pledge");
 
 			proc_rrdp(fd[0]);
@@ -1184,6 +1346,7 @@ main(int argc, char *argv[])
 	} else
 		rrdp = -1;
 
+	/* TODO unveil chachedir and outputdir, no other access allowed */
 	if (pledge("stdio rpath wpath cpath fattr sendfd", NULL) == -1)
 		err(1, "pledge");
 
@@ -1311,7 +1474,7 @@ main(int argc, char *argv[])
 			assert(i < rt.reposz);
 
 			assert(!rt.repos[i].loaded);
-			if (http_done(&rt.repos[i], ok, 0, status, last_mod)) {
+			if (http_done(&rt.repos[i], ok, status, last_mod)) {
 				rt.repos[i].loaded = 1;
 				stats.repos++;
 				entityq_flush(&q, &rt.repos[i]);
@@ -1324,6 +1487,7 @@ main(int argc, char *argv[])
 		 */
 		if ((pfd[3].revents & POLLIN)) {
 			enum rrdp_msg type;
+			struct rrdp_session s;
 			char *uri, *last_mod;
 
 			io_simple_read(rrdp, &type, sizeof(type));
@@ -1334,7 +1498,7 @@ main(int argc, char *argv[])
 			switch (type) {
 			case RRDP_END:
 				io_simple_read(rrdp, &ok, sizeof(ok));
-				if (http_done(&rt.repos[i], ok, 1, 0, NULL)) {
+				if (rrdp_done(&rt.repos[i], ok)) {
 					rt.repos[i].loaded = 1;
 					stats.repos++;
 					entityq_flush(&q, &rt.repos[i]);
@@ -1344,6 +1508,15 @@ main(int argc, char *argv[])
 				io_str_read(rrdp, &uri);
 				io_str_read(rrdp, &last_mod);
 				http_rrdp_fetch(i, uri, last_mod);
+				break;
+			case RRDP_SESSION:
+				io_str_read(rrdp, &s.session_id);
+				io_simple_read(rrdp, &s.serial,
+				    sizeof(s.serial));
+				io_str_read(rrdp, &s.last_mod);
+				save_rrdp_state(&rt.repos[i], &s);
+				free(s.session_id);
+				free(s.last_mod);
 				break;
 			default:
 				errx(1, "unexpected rrdp response");

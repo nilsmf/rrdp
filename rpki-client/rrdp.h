@@ -12,12 +12,6 @@
 	return;				\
 } while(0)
 
-struct rrdp_session {
-	char			*last_mod;
-	char			*session_id;
-	long long		 serial;
-};
-
 enum publish_type {
 	PUB_ADD,
 	PUB_DEL,

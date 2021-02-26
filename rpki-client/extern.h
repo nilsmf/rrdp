@@ -269,10 +269,20 @@ enum rtype {
  */
 enum rrdp_msg {
 	RRDP_START,
+	RRDP_SESSION,
 	RRDP_END,
 	RRDP_HTTP_REQ,
 	RRDP_HTTP_INI,
 	RRDP_HTTP_FIN
+};
+
+/*
+ * RRDP session state, needed to pickup at the right spot on next run.
+ */
+struct rrdp_session {
+	char			*last_mod;
+	char			*session_id;
+	long long		 serial;
 };
 
 /*
