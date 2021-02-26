@@ -1311,7 +1311,7 @@ main(int argc, char *argv[])
 			assert(i < rt.reposz);
 
 			assert(!rt.repos[i].loaded);
-			if (http_done(&rt.repos[i], 0, 0, status, last_mod)) {
+			if (http_done(&rt.repos[i], ok, 0, status, last_mod)) {
 				rt.repos[i].loaded = 1;
 				stats.repos++;
 				entityq_flush(&q, &rt.repos[i]);
