@@ -18,6 +18,7 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <assert.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -80,6 +81,14 @@ struct rrdp {
 };
 
 TAILQ_HEAD(,rrdp)	states = TAILQ_HEAD_INITIALIZER(states);
+
+struct publish_xml {
+	char			*uri;
+	char			*data;
+	char			 hash[SHA256_DIGEST_LENGTH];
+	int			 data_length;
+	enum publish_type	 type;
+};
 
 char *
 xstrdup(const char *s)
@@ -604,32 +613,62 @@ warnx("%s: XML file parsed", s->localdir);
 	exit(0);
 }
 
-FILE *
-open_primary_uri_read(char *uri, struct opts *opts)
+struct publish_xml *
+new_publish_xml(enum publish_type type, char *uri, char *hash, size_t hlen)
 {
-	return NULL;
-}
+	struct publish_xml *pxml;
 
-FILE *
-open_working_uri_read(char *uri, struct opts *opts)
-{
-	return NULL;
-}
+	if ((pxml = calloc(1, sizeof(*pxml))) == NULL)
+		err(1, "%s", __func__);
 
-FILE *
-open_working_uri_write(char *uri, struct opts *opts)
-{
-	return NULL;
-}
+	pxml->type = type;
+	pxml->uri = uri;
+	if (hlen > 0) {
+		assert(hlen == sizeof(pxml->hash));
+		memcpy(pxml->hash, hash, hlen);
+	}
 
-const char *
-fetch_filename_from_uri(const char *uri, const char *proto)
-{
-	return NULL;
+	return pxml;
 }
 
 void
-add_to_file_list(struct file_list *file_list, const char *filename,
-    int withdraw, int check_duplicates)
+free_publish_xml(struct publish_xml *pxml)
 {
+	if (pxml == NULL)
+		return;
+
+	free(pxml->uri);
+	free(pxml->data);
+	free(pxml);
+}
+
+void
+publish_xml_add_content(struct publish_xml *pxml, const char *buf, int length)
+{
+	int new_length;
+
+	/*
+	 * optmisiation, this often gets called with '\n' as the
+	 * only data... seems wasteful
+	 */
+	if (length == 1 && buf[0] == '\n')
+		return;
+
+	/* append content to data */
+	new_length = pxml->data_length + length;
+	pxml->data = realloc(pxml->data, new_length + 1);
+	if (pxml->data == NULL)
+		err(1, "%s", __func__);
+
+	memcpy(pxml->data + pxml->data_length, buf, length);
+	pxml->data[new_length] = '\0';
+	pxml->data_length = new_length;
+}
+
+int
+publish_xml_done(struct publish_xml *pxml)
+{
+	/* TODO send it to main proc for inspection */
+	free_publish_xml(pxml);
+	return 0;
 }

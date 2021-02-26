@@ -34,52 +34,14 @@ enum snapshot_scope {
 };
 
 struct snapshot_xml {
-	struct file_list	*file_list;
 	XML_Parser		 parser;
 	struct rrdp_session	*current;
+	struct publish_xml	*pxml;
 	char			*session_id;
 	long long		 serial;
-	char			*publish_uri;
-	char			*publish_data;
-	unsigned int		 publish_data_length;
 	int			 version;
 	enum snapshot_scope	 scope;
 };
-
-static void
-write_snapshot_publish(struct snapshot_xml *sxml)
-{
-#ifdef NOTYET
-	FILE *f;
-	unsigned char *data_decoded;
-	size_t decoded_len;
-	const char *filename;
-
-	f = open_working_uri_write(sxml->publish_uri, NULL);
-	if (f == NULL)
-		err(1, "%s - file open fail", __func__);
-	/* decode b64 message */
-	if (base64_decode(snapshot_xml->publish_data, &data_decoded,
-	    &decoded_len) == -1) {
-		warnx("base64 decode failed in snapshot");
-	} else {
-		fwrite(data_decoded, 1, decoded_len, f);
-		free(data_decoded);
-	}
-	fclose(f);
-
-	filename = fetch_filename_from_uri(sxml->publish_uri,
-	    "rsync://");
-	add_to_file_list(sxml->file_list, filename, 0, 0);
-#endif
-
-//warnx("%s", sxml->publish_uri);
-
-	free(sxml->publish_uri);
-	free(sxml->publish_data);
-	sxml->publish_uri = NULL;
-	sxml->publish_data = NULL;
-}
 
 static void
 start_snapshot_elem(struct snapshot_xml *sxml, const char **attr)
@@ -143,21 +105,23 @@ static void
 start_publish_elem(struct snapshot_xml *sxml, const char **attr)
 {
 	XML_Parser p = sxml->parser;
-	int i;
+	char *uri = NULL;
+	int i, hasUri = 0;
 
 	if (sxml->scope != SNAPSHOT_SCOPE_SNAPSHOT)
 		PARSE_FAIL(p,
 		    "parse failed - entered publish elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
-		if (strcmp("uri", attr[i]) == 0) {
-			sxml->publish_uri = xstrdup(attr[i+1]);
+		if (strcmp("uri", attr[i]) == 0 && hasUri++) {
+			uri = xstrdup(attr[i+1]);
 			continue;
 		}
 		PARSE_FAIL(p, "parse failed - non conforming"
 		    " attribute found in publish elem");
 	}
-	if (!sxml->publish_uri)
+	if (hasUri != 1)
 		PARSE_FAIL(p, "parse failed - incomplete publish attributes");
+	sxml->pxml = new_publish_xml(PUB_ADD, uri, NULL, 0);
 	sxml->scope = SNAPSHOT_SCOPE_PUBLISH;
 }
 
@@ -169,11 +133,10 @@ end_publish_elem(struct snapshot_xml *sxml)
 	if (sxml->scope != SNAPSHOT_SCOPE_PUBLISH)
 		PARSE_FAIL(p, "parse failed - exited publish "
 		    "elem unexpectedely");
-	if (!sxml->publish_uri)
-		PARSE_FAIL(p, "parse failed - no data recovered "
-		    "from publish elem");
 
-	write_snapshot_publish(sxml);
+	if (publish_xml_done(sxml->pxml) != 0)
+		PARSE_FAIL(p, "parse failed - bad publish elem");
+	sxml->pxml = NULL;
 
 	sxml->scope = SNAPSHOT_SCOPE_SNAPSHOT;
 }
@@ -219,28 +182,9 @@ static void
 snapshot_content_handler(void *data, const char *content, int length)
 {
 	struct snapshot_xml *sxml = data;
-	int new_length;
 
-	if (sxml->scope == SNAPSHOT_SCOPE_PUBLISH) {
-		/*
-		 * optmisiation, this often gets called with '\n' as the
-		 * only data... seems wasteful
-		 */
-		if (length == 1 && content[0] == '\n')
-			return;
-
-		/* append content to publish_data */
-		new_length = sxml->publish_data_length + length;
-		sxml->publish_data = realloc(sxml->publish_data,
-		    new_length + 1);
-		if (sxml->publish_data == NULL)
-			err(1, "%s - realloc", __func__);
-
-		memcpy(sxml->publish_data +
-		    sxml->publish_data_length, content, length);
-		sxml->publish_data[new_length] = '\0';
-		sxml->publish_data_length = new_length;
-	}
+	if (sxml->scope == SNAPSHOT_SCOPE_PUBLISH)
+		publish_xml_add_content(sxml->pxml, content, length);
 }
 
 void
@@ -278,10 +222,7 @@ free_snapshot_xml(struct snapshot_xml *sxml)
 	if (sxml == NULL)
 		return;
 
-	free(sxml->publish_uri);
-	free(sxml->publish_data);
 	free(sxml->session_id);
-
-	/* XXX TODO NUKE file_list */
+	free_publish_xml(sxml->pxml);
 	free(sxml);
 }

@@ -1,47 +1,9 @@
 #ifndef _RRDPH_
 #define _RRDPH_
 
-#include <stdio.h>
-#include <sys/queue.h>
-#include <expat.h>
-#include <openssl/sha.h>
-
-/* util */
 #define MAX_VERSION 1
 
 #define log_debuginfo(format, ...) logx(format, ##__VA_ARGS__)
-
-char 	*xstrdup(const char *);
-int	 hex_to_bin(const char *, char *, size_t);
-
-struct opts;
-
-FILE 		*open_primary_uri_read(char *, struct opts *);
-FILE 		*open_working_uri_read(char *, struct opts *);
-FILE 		*open_working_uri_write(char *, struct opts *);
-void		 make_workdir(const char *, struct opts *);
-void		 free_workdir(struct opts *);
-const char	*fetch_filename_from_uri(const char *, const char *);
-
-/* file_util */
-enum action {
-	ACTION_COPY,
-	ACTION_DELETE
-};
-
-struct file_delta {
-	char *filename;
-	enum action action;
-	SLIST_ENTRY(file_delta) file_list;
-};
-
-SLIST_HEAD(file_list, file_delta);
-
-int mkpath_at(int, const char *);
-int rm_dir(char *, int);
-int mv_delta(int, int, struct file_list *);
-int empty_file_list(struct file_list *);
-void add_to_file_list(struct file_list *, const char *, int, int);
 
 /* save everyone doing this code over and over */
 #define PARSE_FAIL(p, ...) do {		\
@@ -55,6 +17,25 @@ struct rrdp_session {
 	char			*session_id;
 	long long		 serial;
 };
+
+enum publish_type {
+	PUB_ADD,
+	PUB_DEL,
+};
+
+/* rrdp generic */
+char 	*xstrdup(const char *);
+int	 hex_to_bin(const char *, char *, size_t);
+
+/* publish or withdraw element */
+struct publish_xml;
+
+struct publish_xml	*new_publish_xml(enum publish_type, char *,
+			    char *, size_t);
+void			 free_publish_xml(struct publish_xml *);
+void			 publish_xml_add_content(struct publish_xml *,
+			    const char *, int);
+int			 publish_xml_done(struct publish_xml *);
 
 /* notification */
 struct notification_xml;
