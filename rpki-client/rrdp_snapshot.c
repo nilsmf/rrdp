@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
+ * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -113,12 +114,12 @@ start_publish_elem(struct snapshot_xml *sxml, const char **attr)
 		PARSE_FAIL(p,
 		    "parse failed - entered publish elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
-		if (strcmp("uri", attr[i]) == 0 && hasUri++) {
+		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
 			uri = xstrdup(attr[i+1]);
 			continue;
 		}
 		PARSE_FAIL(p, "parse failed - non conforming"
-		    " attribute found in publish elem");
+		    " attribute '%s' found in publish elem", attr[i]);
 	}
 	if (hasUri != 1)
 		PARSE_FAIL(p, "parse failed - incomplete publish attributes");
@@ -135,7 +136,7 @@ end_publish_elem(struct snapshot_xml *sxml)
 		PARSE_FAIL(p, "parse failed - exited publish "
 		    "elem unexpectedely");
 
-	if (publish_xml_done(sxml->rrdp, sxml->pxml) != 0)
+	if (publish_done(sxml->rrdp, sxml->pxml) != 0)
 		PARSE_FAIL(p, "parse failed - bad publish elem");
 	sxml->pxml = NULL;
 
@@ -185,15 +186,7 @@ snapshot_content_handler(void *data, const char *content, int length)
 	struct snapshot_xml *sxml = data;
 
 	if (sxml->scope == SNAPSHOT_SCOPE_PUBLISH)
-		publish_xml_add_content(sxml->pxml, content, length);
-}
-
-void
-log_snapshot_xml(struct snapshot_xml *sxml)
-{
-	logx("scope: %d", sxml->scope);
-	logx("version: %d", sxml->version);
-	logx("session_id: %s serial: %lld", sxml->session_id, sxml->serial);
+		publish_add_content(sxml->pxml, content, length);
 }
 
 struct snapshot_xml *
@@ -227,4 +220,12 @@ free_snapshot_xml(struct snapshot_xml *sxml)
 	free(sxml->session_id);
 	free_publish_xml(sxml->pxml);
 	free(sxml);
+}
+
+void
+log_snapshot_xml(struct snapshot_xml *sxml)
+{
+	logx("scope: %d", sxml->scope);
+	logx("version: %d", sxml->version);
+	logx("session_id: %s serial: %lld", sxml->session_id, sxml->serial);
 }

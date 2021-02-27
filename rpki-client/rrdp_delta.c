@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
+ * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -91,6 +92,8 @@ start_delta_elem(struct delta_xml *dxml, const char **attr)
 		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
 	if (strcmp(dxml->current->session_id, dxml->session_id) != 0)
 		PARSE_FAIL(p, "parse failed - session_id mismatch");
+	if (dxml->current->serial != dxml->serial)
+		PARSE_FAIL(p, "parse failed - serial mismatch");
 
 	dxml->scope = DELTA_SCOPE_DELTA;
 }
@@ -155,7 +158,7 @@ end_publish_withdraw_elem(struct delta_xml *dxml, int withdraw)
 		PARSE_FAIL(p, "parse failed - exited publish/withdraw "
 		    "elem unexpectedely");
 
-	if (publish_xml_done(dxml->rrdp, dxml->pxml) != 0)
+	if (publish_done(dxml->rrdp, dxml->pxml) != 0)
 		PARSE_FAIL(p, "parse failed - bad publish/withdraw elem");
 	dxml->pxml = NULL;
 
@@ -213,14 +216,7 @@ delta_content_handler(void *data, const char *content, int length)
 	struct delta_xml *dxml = data;
 
 	if (dxml->scope == DELTA_SCOPE_PUBLISH)
-		publish_xml_add_content(dxml->pxml, content, length);
-}
-
-void
-log_delta_xml(struct delta_xml *dxml)
-{
-	logx("version: %d", dxml->version);
-	logx("session_id: %s serial: %lld", dxml->session_id, dxml->serial);
+		publish_add_content(dxml->pxml, content, length);
 }
 
 struct delta_xml *
@@ -254,4 +250,11 @@ free_delta_xml(struct delta_xml *dxml)
 	free(dxml->session_id);
 	free_publish_xml(dxml->pxml);
 	free(dxml);
+}
+
+void
+log_delta_xml(struct delta_xml *dxml)
+{
+	logx("version: %d", dxml->version);
+	logx("session_id: %s serial: %lld", dxml->session_id, dxml->serial);
 }

@@ -12,6 +12,12 @@
 	return;				\
 } while(0)
 
+enum rrdp_task {
+	NOTIFICATION,
+	SNAPSHOT,
+	DELTA,
+};
+
 /* rrdp generic */
 char 	*xstrdup(const char *);
 int	 hex_to_bin(const char *, char *, size_t);
@@ -23,19 +29,22 @@ struct publish_xml;
 struct publish_xml	*new_publish_xml(enum publish_type, char *,
 			    char *, size_t);
 void			 free_publish_xml(struct publish_xml *);
-void			 publish_xml_add_content(struct publish_xml *,
+void			 publish_add_content(struct publish_xml *,
 			    const char *, int);
-int			 publish_xml_done(struct rrdp *, struct publish_xml *);
+int			 publish_done(struct rrdp *, struct publish_xml *);
 
 /* notification */
 struct notification_xml;
 
 struct notification_xml	*new_notification_xml(XML_Parser,
-			    struct rrdp_session *);
+			    struct rrdp_session *, struct rrdp_session *);
 void		 	 free_notification_xml(struct notification_xml *);
-void			 log_notification_xml(struct notification_xml *);
+enum rrdp_task		 notification_done(struct notification_xml *,
+			    char *);
 const char		*notification_get_next(struct notification_xml *,
-			    char *, size_t, int);
+			    char *, size_t, enum rrdp_task);
+int			 notification_delta_done(struct notification_xml *);
+void			 log_notification_xml(struct notification_xml *);
 
 /* snapshot */
 struct snapshot_xml;

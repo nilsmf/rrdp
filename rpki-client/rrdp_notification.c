@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
+ * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -25,6 +26,7 @@
 #include <unistd.h>
 
 #include <expat.h>
+#include <openssl/sha.h>
 
 #include "extern.h"
 #include "rrdp.h"
@@ -38,13 +40,6 @@ enum notification_scope {
 	NOTIFICATION_SCOPE_END
 };
 
-enum notification_state {
-	NOTIFICATION_STATE_SNAPSHOT,
-	NOTIFICATION_STATE_DELTAS,
-	NOTIFICATION_STATE_NONE,
-	NOTIFICATION_STATE_ERROR
-};
-
 struct delta_item {
 	char			*uri;
 	char			 hash[SHA256_DIGEST_LENGTH];
@@ -56,6 +51,7 @@ TAILQ_HEAD(delta_q, delta_item);
 
 struct notification_xml {
 	XML_Parser		parser;
+	struct rrdp_session	*repository;
 	struct rrdp_session	*current;
 	char			*session_id;
 	char			*snapshot_uri;
@@ -64,7 +60,6 @@ struct notification_xml {
 	long long		serial;
 	int			version;
 	enum notification_scope	scope;
-	enum notification_state	state;
 };
 
 static int
@@ -82,7 +77,7 @@ add_delta(struct notification_xml *nxml, const char *uri,
 	d->uri = xstrdup(uri);
 	memcpy(d->hash, hash, sizeof(d->hash));
 
-	/* optimise for a sorted list */
+	/* optimise for a sorted input */
 	n = TAILQ_LAST(&nxml->delta_q, delta_q);
 	if (n == NULL)
 		TAILQ_INSERT_HEAD(&nxml->delta_q, d, q);
@@ -109,77 +104,6 @@ free_delta(struct delta_item *d)
 {
 	free(d->uri);
 	free(d);
-}
-
-static void
-check_state(struct notification_xml *nxml)
-{
-	struct delta_item *d;
-	int serial_counter = 0;
-	int serial_diff;
-
-	/* Already have an error or already up to date keep it persistent */
-	if (nxml->state == NOTIFICATION_STATE_ERROR ||
-	    nxml->state == NOTIFICATION_STATE_NONE)
-		return;
-
-	/* No current data have to go from the snapshot */
-	if (nxml->current->session_id == NULL || nxml->current->serial == 0) {
-		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
-		return;
-	}
-
-	/* No data and yet check_state was called */
-	if (nxml->session_id == NULL || nxml->serial == 0) {
-		nxml->state = NOTIFICATION_STATE_ERROR;
-		return;
-	}
-
-	/* New session available should go from snapshot */
-	if(strcmp(nxml->current->session_id, nxml->session_id) != 0) {
-		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
-		return;
-	}
-
-	serial_diff = nxml->serial - nxml->current->serial;
-
-	if (serial_diff == 0) {
-		/* Up to date, no further action needed */
-		nxml->state = NOTIFICATION_STATE_NONE;
-		return;
-	}
-
-	if (serial_diff < 0) {
-		/* current serial is larger! can't even go from snapshot */
-		warnx("serial_diff is negative %lld vs %lld",
-		    nxml->serial, nxml->current->serial);
-		nxml->state = NOTIFICATION_STATE_ERROR;
-		return;
-	}
-
-	/* Exit early if we have not yet parsed the deltas */
-	if (nxml->scope <= NOTIFICATION_SCOPE_DELTA) {
-		return;
-	}
-
-	/* current serial is greater lets try deltas */
-	TAILQ_FOREACH(d, &nxml->delta_q, q) {
-		serial_counter++;
-		if (nxml->current->serial + serial_counter != d->serial) {
-			/* missing delta fall back to snapshot */
-			nxml->state = NOTIFICATION_STATE_SNAPSHOT;
-			return;
-		}
-	}
-	/* all deltas present? */
-	if (serial_counter != serial_diff) {
-		warnx("Mismatch # expected deltas vs. # found deltas");
-		nxml->state = NOTIFICATION_STATE_SNAPSHOT;
-		return;
-	}
-	log_debuginfo("Happy to apply %d deltas", serial_counter);
-	/* All serials matched */
-	nxml->state = NOTIFICATION_STATE_DELTAS;
 }
 
 static void
@@ -221,7 +145,6 @@ start_notification_elem(struct notification_xml *nxml, const char **attr)
 		PARSE_FAIL(p, "parse failed - incomplete "
 		    "notification attributes");
 
-	check_state(nxml);
 	nxml->scope = NOTIFICATION_SCOPE_NOTIFICATION;
 }
 
@@ -234,8 +157,6 @@ end_notification_elem(struct notification_xml *nxml)
 		PARSE_FAIL(p, "parse failed - exited notification "
 		    "elem unexpectedely");
 	nxml->scope = NOTIFICATION_SCOPE_END;
-	/* check the state to see if we have enough delta info */
-	check_state(nxml);
 }
 
 static void
@@ -314,7 +235,9 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 	if (hasUri != 1 || hasHash != 1 || delta_serial == 0)
 		PARSE_FAIL(p, "parse failed - incomplete delta attributes");
 
-	if (nxml->current->serial && nxml->current->serial < delta_serial) {
+	/* optimisation, add only deltas that could be interesting */
+	if (nxml->repository->serial != 0 &&
+	    nxml->repository->serial < delta_serial) {
 		if (add_delta(nxml, delta_uri, delta_hash, delta_serial) == 0)
 			PARSE_FAIL(p, "parse failed - adding delta failed");
 	}
@@ -373,21 +296,9 @@ notification_xml_elem_end(void *data, const char *el)
 		PARSE_FAIL(p, "parse failed - unexpected elem exit found");
 }
 
-void
-log_notification_xml(struct notification_xml *nxml)
-{
-	logx("session_id: %s, serial: %lld", nxml->session_id, nxml->serial);
-	logx("snapshot_uri: %s", nxml->snapshot_uri);
-
-/* XXX BLODDY HACK */
-	free(nxml->current->session_id);
-	nxml->current->session_id = xstrdup(nxml->session_id);
-	nxml->current->serial = nxml->serial;
-
-}
-
 struct notification_xml *
-new_notification_xml(XML_Parser p, struct rrdp_session *rs)
+new_notification_xml(XML_Parser p, struct rrdp_session *repository,
+    struct rrdp_session *current)
 {
 	struct notification_xml *nxml;
 
@@ -395,7 +306,8 @@ new_notification_xml(XML_Parser p, struct rrdp_session *rs)
 		err(1, "%s", __func__);
 	TAILQ_INIT(&(nxml->delta_q));
 	nxml->parser = p;
-	nxml->current = rs;
+	nxml->repository = repository;
+	nxml->current = current;
 
 	XML_SetElementHandler(nxml->parser, notification_xml_elem_start,
 	    notification_xml_elem_end);
@@ -420,27 +332,102 @@ free_notification_xml(struct notification_xml *nxml)
 	free(nxml);
 }
 
+/*
+ * Finalize notification step, decide if a delta update is possible
+ * if either the session_id changed or the delta files fail to cover
+ * all the steps up to the new serial fall back to a snapshot.
+ * Return SNAPSHOT or DELTA for snapshot or delta processing.
+ * Return NOTIFICATION if repository is up to date.
+ */
+enum rrdp_task
+notification_done(struct notification_xml *nxml, char *last_mod)
+{
+	struct delta_item *d;
+	long long s, last_s;
+
+	nxml->current->last_mod = last_mod;
+	nxml->current->session_id = xstrdup(nxml->session_id);
+
+	/* check the that the session_id was valid and still the same */
+	if (nxml->repository->session_id == NULL ||
+	    strcmp(nxml->session_id, nxml->repository->session_id) != 0)
+		goto snapshot;
+
+	/* if repository serial is 0 fall back to snapshot */
+	if (nxml->repository->serial == 0)
+		goto snapshot;
+
+	if (nxml->repository->serial == nxml->serial) {
+		nxml->current->serial = nxml->serial;
+		return NOTIFICATION;
+	}
+
+	/* check that all needed deltas are available */
+	s = nxml->repository->serial + 1;
+	TAILQ_FOREACH(d, &nxml->delta_q, q) {
+		if (d->serial != s++)
+			goto snapshot;
+		last_s = d->serial;
+	}
+	if (last_s != nxml->serial)
+		goto snapshot;
+
+	/* update via delta possible */
+	nxml->current->serial = nxml->repository->serial;
+	return DELTA;
+
+snapshot:
+	/* update via snapshot download */
+	nxml->current->serial = nxml->serial;
+	return SNAPSHOT;
+}
+
 const char *
 notification_get_next(struct notification_xml *nxml, char *hash, size_t hlen,
-    int delta)
+    enum rrdp_task task)
 {
-	struct delta_item *d = NULL;
+	struct delta_item *d;
 
-	if (delta)
-		d = TAILQ_FIRST(&nxml->delta_q);
-	if (d == NULL) {
-		/* no delta - pull the snapshot */
+	switch (task) {
+	case SNAPSHOT:
 		assert(hlen == sizeof(nxml->snapshot_hash));
 		memcpy(hash, nxml->snapshot_hash, hlen);
-
 		return nxml->snapshot_uri;
-	} else {
+	case DELTA:
+		/* first bump serial, then use first delta  */
+		nxml->current->serial += 1;
+		d = TAILQ_FIRST(&nxml->delta_q);
+		assert(d->serial == nxml->current->serial);
 		assert(hlen == sizeof(d->hash));
 		memcpy(hash, d->hash, hlen);
-
-		/* can't remove the d element now since uri needs
-		 * to remain valid. Shit shit shit.
-		 */
 		return d->uri;
+	default:
+		errx(1, "%s: bad task", __func__);
 	}
+}
+
+/*
+ * Pop first element from the delta queue. Return non-0 if this was the last
+ * delta to fetch.
+ */
+int
+notification_delta_done(struct notification_xml *nxml)
+{
+	struct delta_item *d;
+
+	d = TAILQ_FIRST(&nxml->delta_q);
+	assert(d->serial == nxml->current->serial);
+	TAILQ_REMOVE(&nxml->delta_q, d, q);
+	free_delta(d);
+
+	assert(!TAILQ_EMPTY(&nxml->delta_q) ||
+	    nxml->serial == nxml->current->serial);
+	return TAILQ_EMPTY(&nxml->delta_q);
+}
+
+void
+log_notification_xml(struct notification_xml *nxml)
+{
+	logx("session_id: %s, serial: %lld", nxml->session_id, nxml->serial);
+	logx("snapshot_uri: %s", nxml->snapshot_uri);
 }

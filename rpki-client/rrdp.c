@@ -30,7 +30,6 @@
 #include <imsg.h>
 
 #include <expat.h>
-
 #include <openssl/sha.h>
 
 #include "extern.h"
@@ -48,11 +47,6 @@ enum rrdp_state {
 	PARSED,
 	ERROR,
 	DONE,
-};
-enum rrdp_task {
-	NOTIFICATION,
-	SNAPSHOT,
-	DELTA,
 };
 
 struct rrdp {
@@ -72,7 +66,8 @@ struct rrdp {
 	char			 hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX		 ctx;
 
-	struct rrdp_session	 session;
+	struct rrdp_session	 repository;
+	struct rrdp_session	 current;
 	XML_Parser		 parser;
 	struct notification_xml	*nxml;
 	struct snapshot_xml	*sxml;
@@ -163,6 +158,7 @@ rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 	enum rrdp_msg type = RRDP_HTTP_REQ;
 	struct ibuf *b;
 
+warnx("FETCH: uri: %s", uri);
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
@@ -185,9 +181,9 @@ rrdp_state_send(struct rrdp *s)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
 	io_simple_buffer(b, &s->id, sizeof(s->id));
-	io_str_buffer(b, s->session.session_id);
-	io_simple_buffer(b, &s->session.serial, sizeof(s->session.serial));
-	io_str_buffer(b, s->session.last_mod);
+	io_str_buffer(b, s->current.session_id);
+	io_simple_buffer(b, &s->current.serial, sizeof(s->current.serial));
+	io_str_buffer(b, s->current.last_mod);
 	ibuf_close(&msgq, b);
 }
 
@@ -204,15 +200,15 @@ rrdp_new(size_t id, char *local, char *notify, char *session_id,
 	s->id = id;
 	s->local = local;
 	s->notifyuri = notify;
-	s->session.session_id = session_id;
-	s->session.serial = serial;
-	s->session.last_mod = last_mod;
+	s->repository.session_id = session_id;
+	s->repository.serial = serial;
+	s->repository.last_mod = last_mod;
 
 	s->state = REQ;
 	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
 		err(1, "XML_ParserCreate");
 
-	s->nxml = new_notification_xml(s->parser, &s->session);
+	s->nxml = new_notification_xml(s->parser, &s->repository, &s->current);
 
 	TAILQ_INSERT_TAIL(&states, s, entry);
 
@@ -237,8 +233,10 @@ rrdp_free(struct rrdp *s)
 		XML_ParserFree(s->parser);
 	free(s->notifyuri);
 	free(s->local);
-	free(s->session.last_mod);
-	free(s->session.session_id);
+	free(s->repository.last_mod);
+	free(s->repository.session_id);
+	free(s->current.last_mod);
+	free(s->current.session_id);
 
 	free(s);
 }
@@ -259,17 +257,18 @@ rrdp_failed(struct rrdp *s)
 {
 	size_t id = s->id;
 
-	/* may need to do some cleanup in the repo here */
+	/* XXX MUST do some cleanup in the repo here */
 	if (s->task == DELTA) {
-		/* fallback to a snapshot */
+		/* fallback to a snapshot as per RFC8182 */
 		free_delta_xml(s->dxml);
-		s->sxml = new_snapshot_xml(s->parser, &s->session, s);
+		s->sxml = new_snapshot_xml(s->parser, &s->current, s);
 		s->task = SNAPSHOT;
 		s->state = REQ;
 	} else {
 		/*
 		 * TODO: update state to track recurring failures
 		 * and fall back to rsync after a while.
+		 * This should probably happen in the main process.
 		 */
 		rrdp_free(s);
 		rrdp_done(id, 0);
@@ -301,20 +300,19 @@ rrdp_input_handler(int fd)
 
 		s = rrdp_new(id, local, notify, session_id, serial, last_mod);
 
-warnx("GOT: local:%s\nnotify: %s", local, notify);
+warnx("START: local: %s notify: %s", local, notify);
 		break;
 	case RRDP_HTTP_INI:
 		if (infd == -1)
 			errx(1, "expected fd not received");
 		s = rrdp_get(id);
 		if (s == NULL)
-			errx(1, "rrdp session %zu does not exist INI", id);
+			errx(1, "rrdp session %zu does not exist", id);
 		if (s->state != WAITING)
 			errx(1, "bad internal state");
 
 		s->infd = infd;
 		s->state = PARSING;
-warnx("%s: INI: off we go", s->local);
 		break;
 	case RRDP_HTTP_FIN:
 		io_simple_read(fd, &status, sizeof(status));
@@ -324,7 +322,7 @@ warnx("%s: INI: off we go", s->local);
 
 		s = rrdp_get(id);
 		if (s == NULL)
-			errx(1, "rrdp session %zu does not exist FIN", id);
+			errx(1, "rrdp session %zu does not exist", id);
 		if (s->state == PARSING)
 			warnx("%s: parser not finished", s->local);
 		if (s->state == ERROR) {
@@ -336,19 +334,25 @@ warnx("%s: INI: off we go", s->local);
 		if (s->state != PARSED)
 			errx(1, "bad internal state");
 
-warnx("%s: FIN: status: %d last_mod: %s", s->local, status, last_mod);
+warnx("%s[%d]: FIN: status: %d last_mod: %s", s->local, s->task, status, last_mod);
 		s->status = status;
 		s->state = DONE;
-		/* not all files have been validated and put in place */
+
 #ifdef NOTYET
+		/* not all files have been validated and put in place */
 		if (s->file_pending > 0)
 			break;
 #endif
 done:
 		if (s->status == 200) {
-			/* Finalize the parser */
+			/*
+			 * Finalize parsing on success to be sure that
+			 * all of the XML is correct. Needs to be done here
+			 * since the call would most probably fail for non
+			 * successful data fetches.
+			 */
 			if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
-				warnx("%s: parse error at line %lu: %s",
+				warnx("%s: XML error at line %lu: %s",
 				    s->local,
 				    XML_GetCurrentLineNumber(s->parser),
 				    XML_ErrorString(XML_GetErrorCode(s->parser))
@@ -357,37 +361,59 @@ done:
 				break;
 			}
 
-			/* XXX check file_failed > 0 */
+			/* If a file caused an error fail the update */
+			if (s->file_failed > 0) {
+				rrdp_failed(s);
+				break;
+			}
 
-			/* XXX process next */
-if (s->task == NOTIFICATION) {
-serial = s->session.serial;
-log_notification_xml(s->nxml);
-free(s->session.last_mod);
-s->session.last_mod = last_mod;
-rrdp_state_send(s);
-if (serial == 0) {
-s->sxml = new_snapshot_xml(s->parser, &s->session, s);
-s->task = SNAPSHOT;
-s->state = REQ;
-} else if (s->session.serial == serial) {
-warnx("UP TO DATE - via serial");
-rrdp_free(s);
-rrdp_done(id, 1);
-} else {
-s->dxml = new_delta_xml(s->parser, &s->session, s);
-s->task = DELTA;
-s->state = REQ;
-}
-} else {
-rrdp_free(s);
-rrdp_done(id, 0);
-}
+			switch (s->task) {
+			case NOTIFICATION:
+				s->task = notification_done(s->nxml, last_mod);
+				switch (s->task) {
+				case NOTIFICATION:
+					warnx("%s: repository not modified",
+					    s->local);
 
-
+					rrdp_state_send(s);
+					rrdp_free(s);
+					rrdp_done(id, 1);
+					break;
+				case SNAPSHOT:
+					s->sxml = new_snapshot_xml(s->parser,
+					    &s->current, s);
+					s->state = REQ;
+					break;
+				case DELTA:
+					s->dxml = new_delta_xml(s->parser,
+					    &s->current, s);
+					s->state = REQ;
+					break;
+				}
+				break;
+			case SNAPSHOT:
+				rrdp_state_send(s);
+				rrdp_free(s);
+				rrdp_done(id, 1);
+				break;
+			case DELTA:
+				if (notification_delta_done(s->nxml)) {
+					/* finished */
+					rrdp_state_send(s);
+					rrdp_free(s);
+					rrdp_done(id, 1);
+				} else {
+					/* reset delta parser for next delta */
+					free_delta_xml(s->dxml);
+					s->dxml = new_delta_xml(s->parser,
+					    &s->current, s);
+					s->state = REQ;
+				}
+				break;
+			}
 		} else if (s->status == 304 && s->task == NOTIFICATION) {
-warnx("UP TO DATE - via 304");
-			rrdp_state_send(s);
+			warnx("%s: notification file not modified", s->local);
+			/* no need to update state file */
 			rrdp_free(s);
 			rrdp_done(id, 1);
 		} else {
@@ -399,7 +425,7 @@ warnx("UP TO DATE - via 304");
 	case RRDP_FILE:
 		s = rrdp_get(id);
 		if (s == NULL)
-			errx(1, "rrdp session %zu does not exist FIN", id);
+			errx(1, "rrdp session %zu does not exist", id);
 		io_simple_read(fd, &status, sizeof(status));
 		if (status == 0)
 			s->file_failed++;
@@ -442,13 +468,13 @@ proc_rrdp(int fd)
 				switch (s->task) {
 				case NOTIFICATION:
 					rrdp_fetch(s->id, s->notifyuri,
-					    s->session.last_mod);
+					    s->repository.last_mod);
 					break;
 				case SNAPSHOT:
 				case DELTA:
 					uri = notification_get_next(s->nxml,
 					    s->hash, sizeof(s->hash),
-					    s->task == DELTA);
+					    s->task);
 					SHA256_Init(&s->ctx);
 					rrdp_fetch(s->id, uri, NULL);
 					break;
@@ -518,11 +544,10 @@ proc_rrdp(int fd)
 							rrdp_failed(s);
 							continue;
 						}
-warnx("%s: XML hash valid", s->local);
 					}
-warnx("%s: XML file parsed", s->local);
 
-					s->state = PARSED;
+					if (s->state == PARSING)
+						s->state = PARSED;
 					continue;
 				}
 				/* parse and maybe hash the bytes just read */
@@ -531,12 +556,12 @@ warnx("%s: XML file parsed", s->local);
 				if (s->state == PARSING &&
 				    XML_Parse(p, buf, len, 0) !=
 				    XML_STATUS_OK) {
+					s->state = ERROR;
 					warnx("%s: parse error at line %lu: %s",
 					    s->local,
 					    XML_GetCurrentLineNumber(p),
 					    XML_ErrorString(XML_GetErrorCode(p))
 					    );
-					s->state = ERROR;
 				}
 			}
 		}
@@ -545,6 +570,11 @@ warnx("%s: XML file parsed", s->local);
 	exit(0);
 }
 
+/*
+ * Both snapshots and deltas use publish_xml to store the publish and
+ * withdraw records. Once all the content is added the request is sent
+ * to the main process where it is processed.
+ */
 struct publish_xml *
 new_publish_xml(enum publish_type type, char *uri, char *hash, size_t hlen)
 {
@@ -574,8 +604,12 @@ free_publish_xml(struct publish_xml *pxml)
 	free(pxml);
 }
 
+/*
+ * Add buf to the base64 data string, ensure that this remains a proper
+ * string by NUL-terminating the string.
+ */
 void
-publish_xml_add_content(struct publish_xml *pxml, const char *buf, int length)
+publish_add_content(struct publish_xml *pxml, const char *buf, int length)
 {
 	int new_length;
 
@@ -597,18 +631,24 @@ publish_xml_add_content(struct publish_xml *pxml, const char *buf, int length)
 	pxml->data_length = new_length;
 }
 
+/*
+ * Base64 decode the data blob and send the file to the main process
+ * where the hash is validated and the file stored in the repository.
+ * Increase the file_pending counter to ensure the RRDP process waits
+ * until all files have been processed before moving to the next stage.
+ * Returns 0 on success or -1 on errors (base64 decode failed).
+ */
 int
-publish_xml_done(struct rrdp *s, struct publish_xml *pxml)
+publish_done(struct rrdp *s, struct publish_xml *pxml)
 {
 	enum rrdp_msg type = RRDP_FILE;
 	struct ibuf *b;
-	unsigned char *data;
-	size_t datasz;
+	unsigned char *data = NULL;
+	size_t datasz = 0;
 
-	if ((base64_decode(pxml->data, &data, &datasz)) == -1) {
-		warnx("bad base64 encoding");
-		return -1;
-	}
+	if (pxml->data_length > 0)
+		if ((base64_decode(pxml->data, &data, &datasz)) == -1)
+			return -1;
 
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
