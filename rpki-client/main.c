@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.105 2021/02/23 14:25:29 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.108 2021/03/02 09:23:59 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -94,7 +94,7 @@ RB_PROTOTYPE(filepath_tree, filepath, entry, filepathcmp);
 
 static struct filepath_tree	fpt = RB_INITIALIZER(&fpt);
 static struct msgbuf		procq, rsyncq, httpq, rrdpq;
-static int			cachefd;
+static int			cachefd, outdirfd;
 
 const char	*bird_tablename = "ROAS";
 
@@ -286,7 +286,7 @@ repo_filename(const struct repo *repo, const char *uri)
 
 /*
  * Build TA file name based on the repo info.
- * If temp is set add Xs for mkostempat.
+ * If temp is set add Xs for mkostemp.
  */
 static char *
 ta_filename(const struct repo *repo, int temp)
@@ -423,8 +423,8 @@ state->session_id, state->serial, state->last_mod);
 	file = rrdp_state_filename(r, 0);
 	temp = rrdp_state_filename(r, 1);
 
-	if ((fd = mkostempat(cachefd, temp, O_CLOEXEC)) == -1)
-		err(1, "%s: mkostempat: %s", r->local, temp);
+	if ((fd = mkostemp(temp, O_CLOEXEC)) == -1)
+		err(1, "%s: mkostemp: %s", r->local, temp);
 	(void) fchmod(fd, 0644);
 	f = fdopen(fd, "w");
 	if (f == NULL)
@@ -521,9 +521,9 @@ http_ta_fetch(struct repo *rp)
 
 	rp->temp = ta_filename(rp, 1);
 	
-	filefd = mkostempat(cachefd, rp->temp, O_CLOEXEC);
+	filefd = mkostemp(rp->temp, O_CLOEXEC);
 	if (filefd == -1) {
-		err(1, "mkostempat: %s", rp->temp);
+		err(1, "mkostemp: %s", rp->temp);
 		/* XXX switch to soft fail and restart with next file */
 	}
 	(void) fchmod(filefd, 0644);
@@ -610,7 +610,7 @@ repo_fetch(struct repo *rp)
 	 * Build up the tree to this point.
 	 */
 
-	if (mkpathat(cachefd, rp->local) == -1)
+	if (mkpath(rp->local) == -1)
 		err(1, "%s", rp->local);
 
 	logx("%s: pulling from %s", rp->local, rp->uris[rp->uriidx]);
@@ -1020,16 +1020,12 @@ add_to_del(char **del, size_t *dsz, char *file)
 }
 
 static size_t
-repo_cleanup(int dirfd)
+repo_cleanup(void)
 {
 	size_t i, delsz = 0;
 	char *argv[2], **del = NULL;
 	FTS *fts;
 	FTSENT *e;
-
-	/* change working directory to the cache directory */
-	if (fchdir(dirfd) == -1)
-		err(1, "fchdir");
 
 	for (i = 0; i < rt.reposz; i++) {
 		if (asprintf(&argv[0], "%s", rt.repos[i].local) == -1)
@@ -1106,8 +1102,8 @@ main(int argc, char *argv[])
 	struct roa	**out = NULL;
 	char		*rsync_prog = "openrsync";
 	char		*bind_addr = NULL;
-	const char	*cachedir = NULL, *errs;
-	const char	*tals[TALSZ_MAX];
+	const char	*cachedir = NULL, *outputdir = NULL;
+	const char	*tals[TALSZ_MAX], *errs;
 	struct vrp_tree	 v = RB_INITIALIZER(&v);
 	struct rusage	ru;
 	struct timeval	start_time, now_time;
@@ -1205,6 +1201,8 @@ main(int argc, char *argv[])
 
 	if ((cachefd = open(cachedir, O_RDONLY, 0)) == -1)
 		err(1, "cache directory %s", cachedir);
+	if ((outdirfd = open(outputdir, O_RDONLY, 0)) == -1)
+		err(1, "output directory %s", outputdir);
 
 	if (outformats == 0)
 		outformats = FORMAT_OPENBGPD;
@@ -1215,6 +1213,10 @@ main(int argc, char *argv[])
 		err(1, "no TAL files found in %s", "/etc/rpki");
 
 	TAILQ_INIT(&q);
+
+	/* change working directory to the cache directory */
+	if (fchdir(cachefd) == -1)
+		err(1, "fchdir");
 
 	/*
 	 * Create the file reader as a jailed child process.
@@ -1230,12 +1232,8 @@ main(int argc, char *argv[])
 	if (procpid == 0) {
 		close(fd[1]);
 
-		/* change working directory to the cache directory */
-		if (fchdir(cachefd) == -1)
-			err(1, "fchdir");
-
 		/* Only allow access to the cache directory. */
-		if (unveil(cachedir, "r") == -1)
+		if (unveil(".", "r") == -1)
 			err(1, "%s: unveil", cachedir);
 		if (pledge("stdio rpath", NULL) == -1)
 			err(1, "pledge");
@@ -1262,10 +1260,6 @@ main(int argc, char *argv[])
 		if (rsyncpid == 0) {
 			close(proc);
 			close(fd[1]);
-
-			/* change working directory to the cache directory */
-			if (fchdir(cachefd) == -1)
-				err(1, "fchdir");
 
 			if (pledge("stdio rpath proc exec unveil", NULL) == -1)
 				err(1, "pledge");
@@ -1598,6 +1592,9 @@ free(data);
 			rc = 1;
 		}
 	}
+
+	stats.del_files = repo_cleanup();
+
 	gettimeofday(&now_time, NULL);
 	timersub(&now_time, &start_time, &stats.elapsed_time);
 	if (getrusage(RUSAGE_SELF, &ru) == 0) {
@@ -1609,10 +1606,13 @@ free(data);
 		timeradd(&stats.system_time, &ru.ru_stime, &stats.system_time);
 	}
 
+	/* change working directory to the cache directory */
+	if (fchdir(outdirfd) == -1)
+		err(1, "fchdir output dir");
+
 	if (outputfiles(&v, &stats))
 		rc = 1;
 
-	stats.del_files = repo_cleanup(cachefd);
 
 	logx("Route Origin Authorizations: %zu (%zu failed parse, %zu invalid)",
 	    stats.roas, stats.roas_fail, stats.roas_invalid);

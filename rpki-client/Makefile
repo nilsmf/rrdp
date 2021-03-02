@@ -2,9 +2,9 @@
 
 PROG=	rpki-client
 SRCS=	as.c cert.c cms.c crl.c gbr.c http.c io.c ip.c log.c main.c mft.c \
-	mkdir.c mkostempat.c output.c output-bgpd.c output-bird.c \
-	output-csv.c output-json.c parser.c roa.c rrdp.c rrdp_delta.c \
-	rrdp_notification.c rrdp_snapshot.c rsync.c tal.c validate.c x509.c
+	mkdir.c output.c output-bgpd.c output-bird.c output-csv.c \
+	output-json.c parser.c roa.c rrdp.c rrdp_delta.c rrdp_notification.c \
+	rrdp_snapshot.c rsync.c tal.c validate.c x509.c
 MAN=	rpki-client.8
 
 LDADD+= -lexpat -ltls -lssl -lcrypto -lutil

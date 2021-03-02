@@ -1,4 +1,4 @@
-/*	$OpenBSD: extern.h,v 1.47 2021/02/22 09:46:05 claudio Exp $ */
+/*	$OpenBSD: extern.h,v 1.49 2021/03/02 09:23:59 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -474,7 +474,6 @@ extern int	 outformats;
 #define FORMAT_BIRD	0x02
 #define FORMAT_CSV	0x04
 #define FORMAT_JSON	0x08
-extern char*	 outputdir;
 
 int		 outputfiles(struct vrp_tree *v, struct stats *);
 int		 outputheader(FILE *, struct stats *);
@@ -488,8 +487,7 @@ int		 output_json(FILE *, struct vrp_tree *, struct stats *);
 void	logx(const char *fmt, ...)
 		    __attribute__((format(printf, 1, 2)));
 
-int	mkpathat(int, const char *);
-int	mkostempat(int, char *, int);
+int	mkpath(const char *);
 
 #define		RPKI_PATH_OUT_DIR	"/var/db/rpki-client"
 #define		RPKI_PATH_BASE_DIR	"/var/cache/rpki-client"
