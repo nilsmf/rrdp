@@ -1,4 +1,4 @@
-/*	$OpenBSD: io.c,v 1.12 2021/01/08 08:09:07 claudio Exp $ */
+/*	$OpenBSD: io.c,v 1.13 2021/03/04 13:01:41 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *

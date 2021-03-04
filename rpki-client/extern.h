@@ -1,4 +1,4 @@
-/*	$OpenBSD: extern.h,v 1.49 2021/03/02 09:23:59 claudio Exp $ */
+/*	$OpenBSD: extern.h,v 1.50 2021/03/04 13:01:41 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *

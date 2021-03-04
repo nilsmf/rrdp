@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.18 2021/02/04 08:10:24 claudio Exp $
+#	$OpenBSD: Makefile,v 1.19 2021/03/04 13:01:41 claudio Exp $
 
 PROG=	rpki-client
 SRCS=	as.c cert.c cms.c crl.c gbr.c http.c io.c ip.c log.c main.c mft.c \
