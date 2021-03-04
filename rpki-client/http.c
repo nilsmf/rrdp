@@ -1,3 +1,4 @@
+/*      $OpenBSD: http.c,v 1.1 2021/03/04 13:01:41 claudio Exp $  */
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
  * Copyright (c) 2020 Claudio Jeker <claudio@openbsd.com>
@@ -14,8 +15,6 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-/*      $OpenBSD: fetch.c,v 1.197 2020/07/04 11:23:35 kn Exp $  */
-/*      $NetBSD: fetch.c,v 1.14 1997/08/18 10:20:20 lukem Exp $ */
 
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.
@@ -55,7 +54,6 @@
 #include <limits.h>
 #include <netdb.h>
 #include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,7 +65,7 @@
 
 #include "extern.h"
 
-#define HTTP_USER_AGENT "OpenBSD rpki-client"
+#define HTTP_USER_AGENT	"OpenBSD rpki-client"
 #define HTTP_BUF_SIZE	(32 * 1024)
 #define MAX_CONNECTIONS	12
 
@@ -98,7 +96,7 @@ struct http_connection {
 	char		*url;
 	char		*host;
 	char		*port;
-	char		*path;	/* points into url */
+	const char	*path;	/* points into url */
 	char		*modified_since;
 	char		*last_modified;
 	struct addrinfo *res0;
@@ -222,11 +220,10 @@ http_setup(void)
 		errx(1, "tls config failed");
 #if 0
 	/* TODO Should we allow extra protos and ciphers? */
-	if (tls_config_set_protocols(tls_config,
-	    TLS_PROTOCOLS_ALL) != 0)
+	if (tls_config_set_protocols(tls_config, TLS_PROTOCOLS_ALL) == -1)
 		errx(1, "tls set protocols failed: %s",
 		    tls_config_error(tls_config));
-	if (tls_config_set_ciphers(tls_config, "legacy") != 0)
+	if (tls_config_set_ciphers(tls_config, "legacy") == -1)
 		errx(1, "tls set ciphers failed: %s",
 		    tls_config_error(tls_config));
 #endif
@@ -258,7 +255,7 @@ http_resolv(struct http_connection *conn, const char *host, const char *port)
 	 */
 	if (error == EAI_SERVICE)
 		error = getaddrinfo(host, "443", &hints, &conn->res0);
-	if (error) {
+	if (error != 0) {
 		warnx("%s: %s", host, gai_strerror(error));
 		return -1;
 	}
@@ -301,19 +298,18 @@ http_free(struct http_connection *conn)
 	if (conn->state != STATE_DONE)
 		http_fail(conn->id);
 
+	free(conn->url);
 	free(conn->host);
 	free(conn->port);
-	free(conn->url);
-	/* no need to free conn->path it points into conn->uri */
+	/* no need to free conn->path it points into conn->url */
 	free(conn->modified_since);
 	free(conn->last_modified);
 	free(conn->buf);
 
-	if (conn->res0)
+	if (conn->res0 != NULL)
 		freeaddrinfo(conn->res0);
 
 	tls_free(conn->tls);
-	conn->tls = NULL;
 
 	if (conn->fd != -1)
 		close(conn->fd);
@@ -324,12 +320,14 @@ http_free(struct http_connection *conn)
 static int
 http_close(struct http_connection *conn)
 {
-	if (conn->tls) {
+	if (conn->tls != NULL) {
 		switch (tls_close(conn->tls)) {
 		case TLS_WANT_POLLIN:
 			return WANT_POLLIN;
 		case TLS_WANT_POLLOUT:
 			return WANT_POLLOUT;
+		case 0:
+			break;
 		case -1:
 			warnx("%s: TLS close: %s", http_info(conn->url),
 			    tls_error(conn->tls));
@@ -377,7 +375,7 @@ http_parse_uri(char *uri, char **ohost, char **oport, char **opath)
 		
 	if ((host = strndup(host, hosttail - host)) == NULL)
 		err(1, "strndup");
-	if (port) {
+	if (port != NULL) {
 		if ((port = strndup(port, path - port)) == NULL)
 			err(1, "strndup");
 	} else {
@@ -442,13 +440,14 @@ http_redirect(struct http_connection *conn, char *uri)
 		return -1;
 	}
 
+	free(conn->url);
+	conn->url = uri;
 	free(conn->host);
 	conn->host = host;
 	free(conn->port);
 	conn->port = port;
-	free(conn->url);
-	conn->url = uri;
 	conn->path = path;
+	/* keep modified_since since that is part of the request */
 	free(conn->last_modified);
 	conn->last_modified = NULL;
 	free(conn->buf);
@@ -582,12 +581,12 @@ http_tls_connect(struct http_connection *conn)
 		warn("tls_client");
 		return -1;
 	}
-	if (tls_configure(conn->tls, tls_config) != 0) {
+	if (tls_configure(conn->tls, tls_config) == -1) {
 		warnx("%s: TLS configuration: %s\n", http_info(conn->url),
 		    tls_error(conn->tls));
 		return -1;
 	}
-	if (tls_connect_socket(conn->tls, conn->fd, conn->host) != 0) {
+	if (tls_connect_socket(conn->tls, conn->fd, conn->host) == -1) {
 		warnx("%s: TLS connect: %s\n", http_info(conn->url),
 		    tls_error(conn->tls));
 		return -1;
@@ -693,7 +692,7 @@ http_parse_status(struct http_connection *conn, char *buf)
 
 	strlcpy(ststr, cp, sizeof(ststr));
 	status = strtonum(ststr, 200, 599, &errstr);
-	if (errstr) {
+	if (errstr != NULL) {
 		strnvis(gerror, cp, sizeof gerror, VIS_SAFE);
 		warnx("Error retrieving %s: %s", http_info(conn->url), gerror);
 		return -1;
@@ -751,7 +750,7 @@ http_parse_header(struct http_connection *conn, char *buf)
 	else if (strncasecmp(cp, CONTENTLEN, sizeof(CONTENTLEN) - 1) == 0) {
 		size_t s;
 		cp += sizeof(CONTENTLEN) - 1;
-		if ((s = strcspn(cp, " \t")))
+		if ((s = strcspn(cp, " \t")) != 0)
 			*(cp+s) = 0;
 		conn->filesize = strtonum(cp, 0, LLONG_MAX, &errstr);
 		if (errstr != NULL) {
@@ -788,7 +787,7 @@ http_parse_header(struct http_connection *conn, char *buf)
 				} else
 					loctail[1] = '\0';
 			}
-			/* Contruct URL from relative redirect */
+			/* Construct URL from relative redirect */
 			if (asprintf(&redirurl, "%.*s/%s%s",
 			    (int)(conn->path - conn->url), conn->url,
 			    locbase ? locbase : "",
@@ -829,7 +828,8 @@ http_get_line(struct http_connection *conn)
 	len = end - conn->buf;
 	while (len > 0 && conn->buf[len - 1] == '\r')
 		--len;
-	line = strndup(conn->buf, len);
+	if ((line = strndup(conn->buf, len)) == NULL)
+		err(1, "%s", __func__);
 
 	/* consume line including \n */
 	end++;
@@ -854,7 +854,7 @@ http_parse_chunked(struct http_connection *conn, char *buf)
 	header[strcspn(header, ";\r\n")] = '\0';
 	errno = 0;
 	chunksize = strtoul(header, &end, 16);
-	if (errno || header[0] == '\0' || *end != '\0' ||
+	if (errno != 0 || header[0] == '\0' || *end != '\0' ||
 	    chunksize > INT_MAX) {
 		warnx("%s: Invalid chunk size", http_info(conn->url));
 		return -1;
@@ -1129,7 +1129,7 @@ proc_http(char *bind_addr, int fd)
 	size_t i;
 	int active_connections;
 
-	if (bind_addr) {
+	if (bind_addr != NULL) {
 		struct addrinfo hints, *res;
 
 		bzero(&hints, sizeof(hints));
@@ -1145,8 +1145,6 @@ proc_http(char *bind_addr, int fd)
 
 	if (pledge("stdio inet dns recvfd", NULL) == -1)
 		err(1, "pledge");
-
-	signal(SIGPIPE, SIG_IGN);
 
 	memset(&http_conns, 0, sizeof(http_conns));
 	memset(&pfds, 0, sizeof(pfds));
