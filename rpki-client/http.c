@@ -1,4 +1,4 @@
-/*      $OpenBSD: http.c,v 1.1 2021/03/04 13:01:41 claudio Exp $  */
+/*      $OpenBSD: http.c,v 1.4 2021/03/04 14:24:54 claudio Exp $  */
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
  * Copyright (c) 2020 Claudio Jeker <claudio@openbsd.com>
@@ -327,11 +327,8 @@ http_close(struct http_connection *conn)
 		case TLS_WANT_POLLOUT:
 			return WANT_POLLOUT;
 		case 0:
-			break;
 		case -1:
-			warnx("%s: TLS close: %s", http_info(conn->url),
-			    tls_error(conn->tls));
-			return -1;
+			break;
 		}
 	}
 
@@ -372,15 +369,15 @@ http_parse_uri(char *uri, char **ohost, char **oport, char **opath)
 		else
 			hosttail = path;
 	}
-		
+
 	if ((host = strndup(host, hosttail - host)) == NULL)
-		err(1, "strndup");
+		err(1, NULL);
 	if (port != NULL) {
 		if ((port = strndup(port, path - port)) == NULL)
-			err(1, "strndup");
+			err(1, NULL);
 	} else {
 		if ((port = strdup("443")) == NULL)
-			err(1, "strdup");
+			err(1, NULL);
 	}
 	/* do not include the initial / in path */
 	path++;
@@ -404,7 +401,7 @@ http_new(size_t id, char *uri, char *modified_since, int outfd)
 		free(modified_since);
 		return NULL;
 	}
-		
+
 	if ((conn = calloc(1, sizeof(*conn))) == NULL)
 		err(1, NULL);
 
@@ -773,7 +770,7 @@ http_parse_header(struct http_connection *conn, char *buf)
 			} else {
 				locbase = strdup(conn->path);
 				if (locbase == NULL)
-					err(1, "");
+					err(1, NULL);
 				loctail = strchr(locbase, '#');
 				if (loctail != NULL)
 					*loctail = '\0';
@@ -829,7 +826,7 @@ http_get_line(struct http_connection *conn)
 	while (len > 0 && conn->buf[len - 1] == '\r')
 		--len;
 	if ((line = strndup(conn->buf, len)) == NULL)
-		err(1, "%s", __func__);
+		err(1, NULL);
 
 	/* consume line including \n */
 	end++;
@@ -1165,7 +1162,7 @@ proc_http(char *bind_addr, int fd)
 				pfds[i].fd = conn->outfd;
 			else
 				pfds[i].fd = conn->fd;
-			
+
 			pfds[i].events = conn->events;
 			active_connections++;
 		}
