@@ -305,6 +305,10 @@ ta_filename(const struct repo *repo, int temp)
 	return nfile;
 }
 
+/*
+ * Build RRDP state file name based on the repo info.
+ * If temp is set add Xs for mkostemp.
+ */
 static char *
 rrdp_state_filename(const struct repo *repo, int temp)
 {
@@ -317,14 +321,12 @@ rrdp_state_filename(const struct repo *repo, int temp)
 	return nfile;
 }
 
-/* RRDP specific functions */
-
 /*
  * Parse the RRDP state file if it exists and set the session struct
  * based on that information.
  */
 static void
-parse_rrdp_state(const struct repo *r, struct rrdp_session *state)
+rrdp_parse_state(const struct repo *r, struct rrdp_session *state)
 {
 	FILE *f;
 	int fd, ln = 0;
@@ -368,7 +370,7 @@ parse_rrdp_state(const struct repo *r, struct rrdp_session *state)
 		ln++;
 	}
 
-warnx("%s: GOT session_id: %s serial: %lld last_mod: %s", r->local,
+warnx("%s: PARSE session_id: %s serial: %lld last_mod: %s", r->local,
 state->session_id, state->serial, state->last_mod);
 
 	free(line);
@@ -389,7 +391,7 @@ fail:
  * Carefully write the RRDP session state file back.
  */
 static void
-save_rrdp_state(const struct repo *r, struct rrdp_session *state)
+rrdp_save_state(const struct repo *r, struct rrdp_session *state)
 {
 	char *temp, *file;
 	FILE *f;
@@ -453,7 +455,7 @@ rrdp_fetch(struct repo *rp)
 	if (mkdtemp(rp->temp) == NULL)
 		err(1, "mkdtemp %s", rp->temp);
 
-	parse_rrdp_state(rp, &state);
+	rrdp_parse_state(rp, &state);
 
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
@@ -1508,7 +1510,7 @@ main(int argc, char *argv[])
 				io_simple_read(rrdp, &s.serial,
 				    sizeof(s.serial));
 				io_str_read(rrdp, &s.last_mod);
-				save_rrdp_state(&rt.repos[i], &s);
+				rrdp_save_state(&rt.repos[i], &s);
 				free(s.session_id);
 				free(s.last_mod);
 				break;
