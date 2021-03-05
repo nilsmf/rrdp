@@ -284,11 +284,14 @@ http_fail(size_t id)
 {
 	struct ibuf *b;
 	int ok = 0;
+	int status = -1;
 
 	if ((b = ibuf_dynamic(8, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &id, sizeof(id));
 	io_simple_buffer(b, &ok, sizeof(ok));
+	io_simple_buffer(b, &status, sizeof(status));
+	io_str_buffer(b, NULL);
 	ibuf_close(&msgq, b);
 }
 
