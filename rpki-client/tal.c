@@ -83,7 +83,6 @@ tal_parse_buffer(const char *fn, char *buf)
 	char		*nl, *line, *f, *file = NULL;
 	unsigned char	*der;
 	size_t		 dersz;
-	ssize_t		 i;
 	int		 rc = 0;
 	struct tal	*tal = NULL;
 	EVP_PKEY	*pkey = NULL;
@@ -104,9 +103,7 @@ tal_parse_buffer(const char *fn, char *buf)
 			break;
 
 		/* make sure only US-ASCII chars are in the URL */
-		for (i = 0; i < nl - line; i++) {
-			if (isalnum(line[i]) || ispunct(line[i]))
-				continue;
+		if (!valid_uri(line, NULL)) {
 			warnx("%s: invalid URI", fn);
 			goto out;
 		}
