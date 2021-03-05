@@ -76,7 +76,7 @@ start_delta_elem(struct delta_xml *dxml, const char **attr)
 				continue;
 		}
 		if (strcmp("session_id", attr[i]) == 0) {
-			dxml->session_id = xstrdup(attr[i+1]);
+			dxml->session_id = xstrdup(attr[i + 1]);
 			continue;
 		}
 		if (strcmp("serial", attr[i]) == 0) {

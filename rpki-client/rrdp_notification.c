@@ -123,7 +123,7 @@ start_notification_elem(struct notification_xml *nxml, const char **attr)
 			continue;
 		}
 		if (strcmp("session_id", attr[i]) == 0) {
-			nxml->session_id = xstrdup(attr[i+1]);
+			nxml->session_id = xstrdup(attr[i + 1]);
 			continue;
 		}
 		if (strcmp("version", attr[i]) == 0) {

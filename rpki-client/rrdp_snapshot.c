@@ -68,7 +68,7 @@ start_snapshot_elem(struct snapshot_xml *sxml, const char **attr)
 				continue;
 		}
 		if (strcmp("session_id", attr[i]) == 0) {
-			sxml->session_id = xstrdup(attr[i+1]);
+			sxml->session_id = xstrdup(attr[i + 1]);
 			continue;
 		}
 		if (strcmp("serial", attr[i]) == 0) {
