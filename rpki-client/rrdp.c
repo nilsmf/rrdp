@@ -40,28 +40,28 @@
 
 static struct msgbuf	msgq;
 
-enum rrdp_state {
-	REQ,
-	WAITING,
-	PARSING,
-	PARSED,
-	ERROR,
-	DONE,
-};
+#define RRDP_STATE_REQ		0x01
+#define RRDP_STATE_WAIT		0x02
+#define RRDP_STATE_PARSE	0x04
+#define RRDP_STATE_PARSE_ERROR	0x08
+#define RRDP_STATE_PARSE_DONE	0x10
+#define RRDP_STATE_HTTP_DONE	0x20
+#define RRDP_STATE_DONE		(RRDP_STATE_PARSE_DONE | RRDP_STATE_HTTP_DONE)
 
 struct rrdp {
 	TAILQ_ENTRY(rrdp)	 entry;
 	size_t			 id;
 	char			*notifyuri;
 	char			*local;
+	char			*last_mod;
 
 	struct pollfd		*pfd;
 	int			 infd;
-	enum rrdp_state		 state;
-	enum rrdp_task		 task;
+	int			 state;
 	int			 status;
 	unsigned int		 file_pending;
 	unsigned int		 file_failed;
+	enum rrdp_task		 task;
 
 	char			 hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX		 ctx;
@@ -204,7 +204,7 @@ rrdp_new(size_t id, char *local, char *notify, char *session_id,
 	s->repository.serial = serial;
 	s->repository.last_mod = last_mod;
 
-	s->state = REQ;
+	s->state = RRDP_STATE_REQ;
 	if ((s->parser = XML_ParserCreate("US-ASCII")) == NULL)
 		err(1, "XML_ParserCreate");
 
@@ -233,6 +233,7 @@ rrdp_free(struct rrdp *s)
 		XML_ParserFree(s->parser);
 	free(s->notifyuri);
 	free(s->local);
+	free(s->last_mod);
 	free(s->repository.last_mod);
 	free(s->repository.session_id);
 	free(s->current.last_mod);
@@ -257,13 +258,17 @@ rrdp_failed(struct rrdp *s)
 {
 	size_t id = s->id;
 
+	/* reset file state before retrying */
+	s->file_failed = 0;
+
 	/* XXX MUST do some cleanup in the repo here */
 	if (s->task == DELTA) {
 		/* fallback to a snapshot as per RFC8182 */
 		free_delta_xml(s->dxml);
+		s->dxml = NULL;
 		s->sxml = new_snapshot_xml(s->parser, &s->current, s);
 		s->task = SNAPSHOT;
-		s->state = REQ;
+		s->state = RRDP_STATE_REQ;
 	} else {
 		/*
 		 * TODO: update state to track recurring failures
@@ -272,6 +277,105 @@ rrdp_failed(struct rrdp *s)
 		 */
 		rrdp_free(s);
 		rrdp_done(id, 0);
+	}
+}
+
+static void
+rrdp_finished(struct rrdp *s)
+{
+	size_t id = s->id;
+
+	/* check if all parts of the process have finished */
+	if ((s->state & RRDP_STATE_DONE) != RRDP_STATE_DONE)
+		return;
+
+	/* still some files pending */
+	if (s->file_pending > 0)
+		return;
+
+	if (s->state & RRDP_STATE_PARSE_ERROR) {
+		warnx("%s: failed after XML parse error", s->local);
+		rrdp_failed(s);
+		return;
+	}
+
+	if (s->status == 200) {
+		/*
+		 * Finalize parsing on success to be sure that
+		 * all of the XML is correct. Needs to be done here
+		 * since the call would most probably fail for non
+		 * successful data fetches.
+		 */
+		if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
+			warnx("%s: XML error at line %lu: %s",
+			    s->local,
+			    XML_GetCurrentLineNumber(s->parser),
+			    XML_ErrorString(XML_GetErrorCode(s->parser))
+			    );
+			rrdp_failed(s);
+			return;
+		}
+
+		/* If a file caused an error fail the update */
+		if (s->file_failed > 0) {
+			rrdp_failed(s);
+			return;
+		}
+
+		switch (s->task) {
+		case NOTIFICATION:
+			s->task = notification_done(s->nxml, s->last_mod);
+			s->last_mod = NULL;
+			switch (s->task) {
+			case NOTIFICATION:
+				warnx("%s: repository not modified",
+				    s->local);
+
+				rrdp_state_send(s);
+				rrdp_free(s);
+				rrdp_done(id, 1);
+				break;
+			case SNAPSHOT:
+				s->sxml = new_snapshot_xml(s->parser,
+				    &s->current, s);
+				s->state = RRDP_STATE_REQ;
+				break;
+			case DELTA:
+				s->dxml = new_delta_xml(s->parser,
+				    &s->current, s);
+				s->state = RRDP_STATE_REQ;
+				break;
+			}
+			break;
+		case SNAPSHOT:
+			rrdp_state_send(s);
+			rrdp_free(s);
+			rrdp_done(id, 1);
+			break;
+		case DELTA:
+			if (notification_delta_done(s->nxml)) {
+				/* finished */
+				rrdp_state_send(s);
+				rrdp_free(s);
+				rrdp_done(id, 1);
+			} else {
+				/* reset delta parser for next delta */
+				free_delta_xml(s->dxml);
+				s->dxml = new_delta_xml(s->parser,
+				    &s->current, s);
+				s->state = RRDP_STATE_REQ;
+			}
+			break;
+		}
+	} else if (s->status == 304 && s->task == NOTIFICATION) {
+		warnx("%s: notification file not modified", s->local);
+		/* no need to update state file */
+		rrdp_free(s);
+		rrdp_done(id, 1);
+	} else {
+		warnx("%s: failed with HTTP status %d", s->local,
+		    s->status);
+		rrdp_failed(s);
 	}
 }
 
@@ -296,7 +400,7 @@ rrdp_input_handler(int fd)
 		io_simple_read(fd, &serial, sizeof(serial));
 		io_str_read(fd, &last_mod);
 		if (infd != -1)
-			errx(1, "received unexpected fd");
+			errx(1, "received unexpected fd %d", infd);
 
 		s = rrdp_new(id, local, notify, session_id, serial, last_mod);
 
@@ -308,11 +412,12 @@ warnx("START: local: %s notify: %s", local, notify);
 		s = rrdp_get(id);
 		if (s == NULL)
 			errx(1, "rrdp session %zu does not exist", id);
-		if (s->state != WAITING)
-			errx(1, "bad internal state");
+		if (s->state != RRDP_STATE_WAIT)
+			errx(1, "%s: bad internal state", s->local);
 
+warnx("%s: INI got infd %d, id %zu", s->local, infd, id);
 		s->infd = infd;
-		s->state = PARSING;
+		s->state = RRDP_STATE_PARSE;
 		break;
 	case RRDP_HTTP_FIN:
 		io_simple_read(fd, &status, sizeof(status));
@@ -323,115 +428,27 @@ warnx("START: local: %s notify: %s", local, notify);
 		s = rrdp_get(id);
 		if (s == NULL)
 			errx(1, "rrdp session %zu does not exist", id);
-		if (s->state == PARSING)
-			warnx("%s: parser not finished", s->local);
-		if (s->state == ERROR) {
-			warnx("%s: failed after XML parse error", s->local);
-			rrdp_failed(s);
-			free(last_mod);
-			break;
-		}
-		if (s->state != PARSED)
-			errx(1, "bad internal state");
+		if (!(s->state & RRDP_STATE_PARSE))
+			errx(1, "%s: bad internal state", s->local);
 
-warnx("%s[%d]: FIN: status: %d last_mod: %s", s->local, s->task, status, last_mod);
+warnx("%s[%d]: FIN: status: %d last_mod: %s id: %zu", s->local, s->task, status, last_mod, id);
 		s->status = status;
-		s->state = DONE;
-
-#ifdef NOTYET
-		/* not all files have been validated and put in place */
-		if (s->file_pending > 0)
-			break;
-#endif
-done:
-		if (s->status == 200) {
-			/*
-			 * Finalize parsing on success to be sure that
-			 * all of the XML is correct. Needs to be done here
-			 * since the call would most probably fail for non
-			 * successful data fetches.
-			 */
-			if (XML_Parse(s->parser, NULL, 0, 1) != XML_STATUS_OK) {
-				warnx("%s: XML error at line %lu: %s",
-				    s->local,
-				    XML_GetCurrentLineNumber(s->parser),
-				    XML_ErrorString(XML_GetErrorCode(s->parser))
-				    );
-				rrdp_failed(s);
-				break;
-			}
-
-			/* If a file caused an error fail the update */
-			if (s->file_failed > 0) {
-				rrdp_failed(s);
-				break;
-			}
-
-			switch (s->task) {
-			case NOTIFICATION:
-				s->task = notification_done(s->nxml, last_mod);
-				switch (s->task) {
-				case NOTIFICATION:
-					warnx("%s: repository not modified",
-					    s->local);
-
-					rrdp_state_send(s);
-					rrdp_free(s);
-					rrdp_done(id, 1);
-					break;
-				case SNAPSHOT:
-					s->sxml = new_snapshot_xml(s->parser,
-					    &s->current, s);
-					s->state = REQ;
-					break;
-				case DELTA:
-					s->dxml = new_delta_xml(s->parser,
-					    &s->current, s);
-					s->state = REQ;
-					break;
-				}
-				break;
-			case SNAPSHOT:
-				rrdp_state_send(s);
-				rrdp_free(s);
-				rrdp_done(id, 1);
-				break;
-			case DELTA:
-				if (notification_delta_done(s->nxml)) {
-					/* finished */
-					rrdp_state_send(s);
-					rrdp_free(s);
-					rrdp_done(id, 1);
-				} else {
-					/* reset delta parser for next delta */
-					free_delta_xml(s->dxml);
-					s->dxml = new_delta_xml(s->parser,
-					    &s->current, s);
-					s->state = REQ;
-				}
-				break;
-			}
-		} else if (s->status == 304 && s->task == NOTIFICATION) {
-			warnx("%s: notification file not modified", s->local);
-			/* no need to update state file */
-			rrdp_free(s);
-			rrdp_done(id, 1);
-		} else {
-			warnx("%s: failed with HTTP status %d", s->local,
-			    s->status);
-			rrdp_failed(s);
-		}
+		s->last_mod = last_mod;
+		s->state |= RRDP_STATE_HTTP_DONE;
+		rrdp_finished(s);
 		break;
 	case RRDP_FILE:
 		s = rrdp_get(id);
 		if (s == NULL)
 			errx(1, "rrdp session %zu does not exist", id);
+		if (infd != -1)
+			errx(1, "received unexpected fd %d", infd);
 		io_simple_read(fd, &status, sizeof(status));
 		if (status == 0)
 			s->file_failed++;
 		s->file_pending--;
-		if (s->file_pending == 0 && s->state == DONE)
-			goto done;
+		if (s->file_pending == 0)
+			rrdp_finished(s);
 		break;
 	default:
 		errx(1, "unexpected message %d", type);
@@ -459,11 +476,12 @@ proc_rrdp(int fd)
 		TAILQ_FOREACH(s, &states, entry) {
 			if (i >= MAX_SESSIONS + 1) {
 				/* not enough sessions, wait for better times */
+warnx("NOT ENOUGH SESSIONS");
 				s->pfd = NULL;
 				continue;
 			}
 			/* request new assets when there are free sessions */
-			if (s->state == REQ) {
+			if (s->state == RRDP_STATE_REQ) {
 				const char *uri;
 				switch (s->task) {
 				case NOTIFICATION:
@@ -479,7 +497,7 @@ proc_rrdp(int fd)
 					rrdp_fetch(s->id, uri, NULL);
 					break;
 				}
-				s->state = WAITING;
+				s->state = RRDP_STATE_WAIT;
 			}
 			s->pfd = pfds + i++;
 			s->pfd->fd = s->infd;
@@ -501,12 +519,14 @@ proc_rrdp(int fd)
 		if (pfds[0].revents & POLLHUP)
 			break;
 		if (pfds[0].revents & POLLOUT) {
+			io_socket_nonblocking(fd);
 			switch (msgbuf_write(&msgq)) {
 			case 0:
 				errx(1, "write: connection closed");
 			case -1:
 				err(1, "write");
 			}
+			io_socket_blocking(fd);
 		}
 		if (pfds[0].revents & POLLIN)
 			rrdp_input_handler(fd);
@@ -520,13 +540,15 @@ proc_rrdp(int fd)
 
 				len = read(s->infd, buf, sizeof(buf));
 				if (len == -1) {
+					s->state |= RRDP_STATE_PARSE_ERROR;
 					warn("%s: read failure", s->local);
-					rrdp_failed(s);
 					continue;
 				}
-				if (s->state != PARSING && s->state != ERROR)
-					errx(1, "bad parser state");
+				if ((s->state & RRDP_STATE_PARSE) == 0)
+					errx(1, "%s: bad parser state",
+					    s->local);
 				if (len == 0) {
+warnx("%s: DONE parsing", s->local);
 					/* parser stage finished */
 					close(s->infd);
 					s->infd = -1;
@@ -537,26 +559,26 @@ proc_rrdp(int fd)
 						SHA256_Final(h, &s->ctx);
 						if (memcmp(s->hash, h,
 						    sizeof(s->hash)) != 0) {
+							s->state |=
+							    RRDP_STATE_PARSE_ERROR;
 							warnx("%s: bad message "
 							   "digest",
 							   s->local);
-
-							rrdp_failed(s);
 							continue;
 						}
 					}
 
-					if (s->state == PARSING)
-						s->state = PARSED;
+					s->state |= RRDP_STATE_PARSE_DONE;
+					rrdp_finished(s);
 					continue;
 				}
 				/* parse and maybe hash the bytes just read */
 				if (s->task != NOTIFICATION)
 					SHA256_Update(&s->ctx, buf, len);
-				if (s->state == PARSING &&
+				if ((s->state & RRDP_STATE_PARSE_ERROR) == 0 &&
 				    XML_Parse(p, buf, len, 0) !=
 				    XML_STATUS_OK) {
-					s->state = ERROR;
+					s->state |= RRDP_STATE_PARSE_ERROR;
 					warnx("%s: parse error at line %lu: %s",
 					    s->local,
 					    XML_GetCurrentLineNumber(p),
