@@ -1,4 +1,4 @@
-/*	$OpenBSD: cert.c,v 1.27 2021/02/18 16:23:17 claudio Exp $ */
+/*	$OpenBSD: cert.c,v 1.28 2021/03/05 17:15:19 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -147,14 +147,14 @@ sbgp_sia_resource_notify(struct parse *p, const char *d, size_t dsz)
 		return 0;
 	}
 
-	if ((p->res->notify = strndup(d, dsz)) == NULL)
-		err(1, NULL);
-
 	/* Make sure it's a https:// address. */
-	if (!valid_uri(p->res->notify, "https://")) {
+	if (!valid_uri(d, dsz, "https://")) {
 		warnx("%s: RFC 8182 section 3.2: bad Notify URI", p->fn);
 		return 0;
 	}
+
+	if ((p->res->notify = strndup(d, dsz)) == NULL)
+		err(1, NULL);
 
 	return 1;
 }
@@ -172,18 +172,15 @@ sbgp_sia_resource_mft(struct parse *p, const char *d, size_t dsz)
 		return 0;
 	}
 
-	if (strcasecmp(d + dsz - 4, ".mft") != 0) {
-		warnx("%s: RFC 6487 section 4.8.8: SIA: "
-		    "not an MFT file", p->fn);
+	/* Make sure it's an MFT rsync address. */
+	if (!valid_uri(d, dsz, "rsync://")) {
+		warnx("%s: RFC 6487 section 4.8.8: bad MFT location", p->fn);
 		return 0;
 	}
 
-	if ((p->res->mft = strndup(d, dsz)) == NULL)
-		err(1, NULL);
-
-	/* Make sure it's an MFT rsync address. */
-	if (!valid_uri(p->res->mft, "rsync://")) {
-		warnx("%s: RFC 6487 section 4.8.8: bad MFT location", p->fn);
+	if (dsz < 4 || strcasecmp(d + dsz - 4, ".mft") != 0) {
+		warnx("%s: RFC 6487 section 4.8.8: SIA: "
+		    "not an MFT file", p->fn);
 		return 0;
 	}
 
@@ -203,15 +200,15 @@ sbgp_sia_resource_carepo(struct parse *p, const char *d, size_t dsz)
 		return 0;
 	}
 
-	if ((p->res->repo = strndup(d, dsz)) == NULL)
-		err(1, NULL);
-
 	/* Make sure it's an rsync:// address. */
-	if (!valid_uri(p->res->repo, "rsync://")) {
+	if (!valid_uri(d, dsz, "rsync://")) {
 		warnx("%s: RFC 6487 section 4.8.8: bad CA repository URI",
 		    p->fn);
 		return 0;
 	}
+
+	if ((p->res->repo = strndup(d, dsz)) == NULL)
+		err(1, NULL);
 
 	return 1;
 }

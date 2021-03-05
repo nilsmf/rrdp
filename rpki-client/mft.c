@@ -1,4 +1,4 @@
-/*	$OpenBSD: mft.c,v 1.28 2021/03/04 14:24:17 claudio Exp $ */
+/*	$OpenBSD: mft.c,v 1.29 2021/03/05 16:00:00 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *

@@ -1,4 +1,4 @@
-/*	$OpenBSD: validate.c,v 1.11 2020/09/12 15:46:48 claudio Exp $ */
+/*	$OpenBSD: validate.c,v 1.13 2021/03/05 17:15:19 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -281,29 +281,24 @@ valid_filehash(const char *fn, const char *hash, size_t hlen)
  * Returns 1 if valid, 0 otherwise.
  */
 int
-valid_uri(const char *uri, const char *proto)
+valid_uri(const char *uri, size_t usz, const char *proto)
 {
-	const unsigned char *u;
+	size_t s;
 
-	for (u = uri; *u != '\0'; u++)
-		if (!isalnum(*u) && !ispunct(*u)) {
-			warnx("URI: non-ascii %s", uri);
+	for (s = 0; s < usz; s++)
+		if (!isalnum((unsigned char)uri[s]) &&
+		    !ispunct((unsigned char)uri[s]))
 			return 0;
-		}
 
-	if (proto) {
-		size_t plen = strlen(proto);
-		if (strncasecmp(uri, proto, plen) != 0) {
-			warnx("URI: not proto %s: %s", proto, uri);
+	if (proto != NULL) {
+		s = strlen(proto);
+		if (strncasecmp(uri, proto, s) != 0)
 			return 0;
-		}
 	}
 
-	/* do not allow files or directories to start with a . */
-	if (strstr(uri, "/.") != NULL) {
-		warnx("URI: dot-file %s", uri);
+	/* do not allow files or directories to start with a '.' */
+	if (strstr(uri, "/.") != NULL)
 		return 0;
-	}
 
 	return 1;
 }
