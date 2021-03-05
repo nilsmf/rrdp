@@ -458,7 +458,7 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 	int ok = 0;
 
 	/* belt and suspenders */
-	if (!valid_uri(uri, "rsync://")) {
+	if (!valid_uri(uri, strlen(uri), "rsync://")) {
 		warnx("%s: bad file URI", rp->local);
 		goto done;
 	}

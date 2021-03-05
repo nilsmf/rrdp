@@ -115,7 +115,8 @@ start_publish_elem(struct snapshot_xml *sxml, const char **attr)
 		    "parse failed - entered publish elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
-			if (valid_uri(attr[i + 1], "rsync://")) {
+			if (valid_uri(attr[i + 1], strlen(attr[i + 1]),
+			    "rsync://")) {
 				uri = xstrdup(attr[i + 1]);
 				continue;
 			}
