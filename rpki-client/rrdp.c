@@ -205,7 +205,7 @@ rrdp_new(size_t id, char *local, char *notify, char *session_id,
 	s->repository.last_mod = last_mod;
 
 	s->state = REQ;
-	if ((s->parser = XML_ParserCreate(NULL)) == NULL)
+	if ((s->parser = XML_ParserCreate("US-ASCII")) == NULL)
 		err(1, "XML_ParserCreate");
 
 	s->nxml = new_notification_xml(s->parser, &s->repository, &s->current);

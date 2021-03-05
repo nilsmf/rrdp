@@ -208,7 +208,7 @@ new_snapshot_xml(XML_Parser p, struct rrdp_session *rs, struct rrdp *r)
 	sxml->current = rs;
 	sxml->rrdp = r;
 
-	if (XML_ParserReset(sxml->parser, NULL) != XML_TRUE)
+	if (XML_ParserReset(sxml->parser, "US-ASCII") != XML_TRUE)
 		errx(1, "%s: XML_ParserReset failed", __func__);
 
 	XML_SetElementHandler(sxml->parser, snapshot_xml_elem_start,

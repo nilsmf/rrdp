@@ -232,7 +232,7 @@ new_delta_xml(XML_Parser p, struct rrdp_session *rs, struct rrdp *r)
 	dxml->current = rs;
 	dxml->rrdp = r;
 
-	if (XML_ParserReset(dxml->parser, NULL) != XML_TRUE)
+	if (XML_ParserReset(dxml->parser, "US-ASCII") != XML_TRUE)
 		errx(1, "%s: XML_ParserReset failed", __func__);
 
 	XML_SetElementHandler(dxml->parser, delta_xml_elem_start,
