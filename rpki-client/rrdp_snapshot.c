@@ -118,6 +118,12 @@ start_publish_elem(struct snapshot_xml *sxml, const char **attr)
 			uri = xstrdup(attr[i+1]);
 			continue;
 		}
+		/*
+		 * XXX it seems people can not write proper XML, ignore
+		 * bogus xmlns attribute on publish elements.
+		 */
+		if (strcmp("xmlns", attr[i]) == 0)
+			continue;
 		PARSE_FAIL(p, "parse failed - non conforming"
 		    " attribute '%s' found in publish elem", attr[i]);
 	}
