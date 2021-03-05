@@ -446,6 +446,85 @@ fail:
 	free(file);
 }
 
+static void
+rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
+    char *hash, size_t hlen, char *data, size_t dlen)
+{
+	enum rrdp_msg type = RRDP_FILE;
+	struct ibuf *b;
+	ssize_t s;
+	char *fn;
+	int fd;
+	int ok = 0;
+
+	if (!valid_uri(uri, "rsync://")) {
+		warnx("%s: bad file URI", rp->local);
+		goto done;
+	}
+	if (strstr(uri, rp->repouri) != uri) {
+		/*
+		 * XXX ignore files outside the repo for now.
+		 * Workaround for apnic.
+		 */
+		ok = 1;
+		goto done;
+	}
+
+	if (pt == PUB_UPD || pt == PUB_DEL) {
+		/* TODO check if file exists in temp dir already */
+
+		if ((fn = repo_filename(rp, uri, 0)) == NULL)
+			goto done;
+		if (!valid_filehash(fn, hash, hlen)) {
+			warnx("%s: bad message digest", fn);
+			free(fn);
+			goto done;
+		}
+		free(fn);
+	}
+
+	if (pt == PUB_DEL) {
+		/* TODO remember file to delete */
+	} else {
+		/* add new file to temp dir */
+		if ((fn = repo_filename(rp, uri, 1)) == NULL)
+			goto done;
+
+		fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+		if (fd == -1) {
+			warn("open %s", fn);
+			free(fn);
+			goto done;
+		}
+
+		if ((s = write(fd, data, dlen)) == -1) {
+			warn("write %s", fn);
+			free(fn);
+			close(fd);
+			goto done;
+		}
+		close(fd);
+		if ((size_t)s != dlen) {
+			warnx("short write %s", fn);
+			free(fn);
+			goto done;
+		}
+		free(fn);
+	}
+
+	/* all OK */
+	ok = 1;
+
+done:
+	/* send back response */
+	if ((b = ibuf_open(sizeof(type) + sizeof(rp->id) + sizeof(ok))) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &rp->id, sizeof(rp->id));
+	io_simple_buffer(b, &ok, sizeof(ok));
+	ibuf_close(&rrdpq, b);
+}
+
 /*
  * Initiate a RRDP sync, create the required temporary directory and
  * parse a possible state file before sending the request to the RRDP process.
@@ -1533,10 +1612,11 @@ main(int argc, char *argv[])
 				io_str_read(rrdp, &uri);
 				io_buf_read_alloc(rrdp, (void **)&data, &dsz);
 
-warnx("%s: got [%d] %s", rt.repos[i].local, pt, uri);
-free(uri);
-free(data);
+				rrdp_handle_file(&rt.repos[i], pt, uri,
+				    hash, sizeof(hash), data, dsz);
 
+				free(uri);
+				free(data);
 				break;
 			default:
 				errx(1, "unexpected rrdp response");
