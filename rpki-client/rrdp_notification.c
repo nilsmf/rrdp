@@ -170,8 +170,10 @@ start_snapshot_elem(struct notification_xml *nxml, const char **attr)
 		    "parse failed - entered snapshot elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
-			nxml->snapshot_uri = xstrdup(attr[i+1]);
-			continue;
+			if (valid_uri(attr[i + 1], "https://")) {
+				nxml->snapshot_uri = xstrdup(attr[i + 1]);
+				continue;
+			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
 			if (hex_to_bin(attr[i + 1], nxml->snapshot_hash,
@@ -212,8 +214,10 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 		    "elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
-			delta_uri = attr[i+1];
-			continue;
+			if (valid_uri(attr[i + 1], "https://")) {
+				delta_uri = attr[i + 1];
+				continue;
+			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
 			if (hex_to_bin(attr[i + 1], delta_hash,

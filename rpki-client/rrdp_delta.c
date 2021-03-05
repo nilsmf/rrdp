@@ -124,8 +124,10 @@ start_publish_withdraw_elem(struct delta_xml *dxml, const char **attr,
 		    "elem unexpectedely");
 	for (i = 0; attr[i]; i += 2) {
 		if (strcmp("uri", attr[i]) == 0 && hasUri++ == 0) {
-			uri = xstrdup(attr[i+1]);
-			continue;
+			if (valid_uri(attr[i + 1], "rsync://")) {
+				uri = xstrdup(attr[i + 1]);
+				continue;
+			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
 			if (hex_to_bin(attr[i + 1], hash, sizeof(hash)) == 0)
