@@ -271,15 +271,22 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
  * Build local file name base on the URI and the repo info.
  */
 static char *
-repo_filename(const struct repo *repo, const char *uri)
+repo_filename(const struct repo *repo, const char *uri, int temp)
 {
 	char *nfile;
+	char *dir = repo->local;
 
-	if (strstr(uri, repo->repouri) != uri)
-		errx(1, "%s: URI outside of repository", uri);
+	if (temp)
+		dir = repo->temp;
+
+	if (strstr(uri, repo->repouri) != uri) {
+		warnx("%s: URI %s outside of repository", repo->local, uri);
+		return NULL;
+	}
+
 	uri += strlen(repo->repouri) + 1;	/* skip base and '/' */
 
-	if (asprintf(&nfile, "%s/%s", repo->local, uri) == -1)
+	if (asprintf(&nfile, "%s/%s", dir, uri) == -1)
 		err(1, NULL);
 	return nfile;
 }
@@ -891,11 +898,15 @@ queue_add_from_cert(struct entityq *q, const struct cert *cert)
 	const struct repo	*repo;
 	char			*nfile;
 
-	repo = repo_lookup(cert->mft, cert->notify);
-	if (repo == NULL) /* bad repository URI */
+	repo = repo_lookup(cert->repo, cert->notify);
+	if (repo == NULL) {
+		warnx("%s: repository lookup failed", cert->repo);
 		return;
+	}
 
-	nfile = repo_filename(repo, cert->mft);
+	nfile = repo_filename(repo, cert->mft, 0);
+	if (nfile == NULL)
+		return;
 
 	entityq_add(q, nfile, RTYPE_MFT, repo, NULL, 0, NULL);
 }
