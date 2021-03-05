@@ -386,28 +386,6 @@ fail:
 }
 
 /*
- * RRDP fetch finalized, either with or without success.
- */
-static int
-rrdp_done(struct repo *rp, int ok)
-{
-	if (ok) {
-		logx("%s: loaded from network", rp->local);
-	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
-	    rp->uris[rp->uriidx + 1] != NULL) {
-		logx("%s: load from network failed, retry", rp->local);
-
-		rp->uriidx++;
-		repo_fetch(rp);
-		return 0;
-	} else {
-		logx("%s: load from network failed, "
-		    "fallback to cache", rp->local);
-	}
-	return 1;
-}
-
-/*
  * Carefully write the RRDP session state file back.
  */
 static void
@@ -457,6 +435,63 @@ fail:
 	unlinkat(cachefd, temp, 0);
 	free(temp);
 	free(file);
+}
+
+/*
+ * Initiate a RRDP sync, create the required temporary directory and
+ * parse a possible state file before sending the request to the RRDP process.
+ */
+static void
+rrdp_fetch(struct repo *rp)
+{
+	enum rrdp_msg type = RRDP_START;
+	struct rrdp_session state = { 0 };
+	struct ibuf *b;
+
+	if (asprintf(&rp->temp, "%s.XXXXXXXX", rp->local) == -1)
+		err(1, NULL);
+	if (mkdtemp(rp->temp) == NULL)
+		err(1, "mkdtemp %s", rp->temp);
+
+	parse_rrdp_state(rp, &state);
+
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &rp->id, sizeof(rp->id));
+	io_str_buffer(b, rp->local);
+	io_str_buffer(b, rp->uris[rp->uriidx]);
+	io_str_buffer(b, state.session_id);
+	io_simple_buffer(b, &state.serial, sizeof(state.serial));
+	io_str_buffer(b, state.last_mod);
+	ibuf_close(&rrdpq, b);
+
+	free(state.session_id);
+	free(state.last_mod);
+}
+/*
+ * RRDP fetch finalized, either with or without success.
+ */
+static int
+rrdp_done(struct repo *rp, int ok)
+{
+	if (ok) {
+		logx("%s: loaded from network", rp->local);
+		/* TODO merge temp dir into repo */
+	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
+	    rp->uris[rp->uriidx + 1] != NULL) {
+		logx("%s: load from network failed, retry", rp->local);
+		/* TODO clear and remove temp dir */
+
+		rp->uriidx++;
+		repo_fetch(rp);
+		return 0;
+	} else {
+		logx("%s: load from network failed, "
+		    "fallback to cache", rp->local);
+		/* TODO clear and remove temp dir */
+	}
+	return 1;
 }
 
 /*
@@ -631,25 +666,7 @@ repo_fetch(struct repo *rp)
 		if (rp->repouri == NULL) {
 			http_ta_fetch(rp);
 		} else {
-			enum rrdp_msg type = RRDP_START;
-			struct rrdp_session state = { 0 };
-
-			parse_rrdp_state(rp, &state);
-
-			if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
-				err(1, NULL);
-			io_simple_buffer(b, &type, sizeof(type));
-			io_simple_buffer(b, &rp->id, sizeof(rp->id));
-			io_str_buffer(b, rp->local);
-			io_str_buffer(b, rp->uris[rp->uriidx]);
-			io_str_buffer(b, state.session_id);
-			io_simple_buffer(b, &state.serial,
-			    sizeof(state.serial));
-			io_str_buffer(b, state.last_mod);
-			ibuf_close(&rrdpq, b);
-
-			free(state.session_id);
-			free(state.last_mod);
+			rrdp_fetch(rp);
 		}
 	}
 }
