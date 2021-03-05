@@ -739,8 +739,8 @@ repo_lookup(const char *uri, const char *notify)
 	rp = repo_alloc();
 	rp->repouri = repo;
 	local = strchr(repo, ':') + strlen("://");
-	if (asprintf(&rp->local, "rsync/%s", local) == -1)
-		err(1, "asprintf");
+	if ((rp->local = strdup(local)) == NULL)
+		err(1, NULL);
 	i = 0;
 	if (notify)
 		if ((rp->uris[i++] = strdup(notify)) == NULL)
