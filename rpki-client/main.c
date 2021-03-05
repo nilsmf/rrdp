@@ -453,19 +453,20 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 	enum rrdp_msg type = RRDP_FILE;
 	struct ibuf *b;
 	ssize_t s;
-	char *fn;
+	char *fn, *slash;
 	int fd;
 	int ok = 0;
 
+	/* belt and suspenders */
 	if (!valid_uri(uri, "rsync://")) {
 		warnx("%s: bad file URI", rp->local);
 		goto done;
 	}
+	/*
+	 * XXX ignore files outside the repo for now.
+	 * Workaround for apnic.
+	 */
 	if (strstr(uri, rp->repouri) != uri) {
-		/*
-		 * XXX ignore files outside the repo for now.
-		 * Workaround for apnic.
-		 */
 		ok = 1;
 		goto done;
 	}
@@ -487,8 +488,16 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 		/* TODO remember file to delete */
 	} else {
 		/* add new file to temp dir */
-		if ((fn = repo_filename(rp, uri, 1)) == NULL)
+		if ((fn = repo_filename(rp, uri, 0 /* XXX 1 */)) == NULL)
 			goto done;
+
+		/* build directory hierarchy */
+		slash = strrchr(fn, '/');
+		assert(slash != NULL);
+		*slash = '\0';
+		if (mkpath(fn) == -1)
+			err(1, "%s", fn);
+		*slash = '/';
 
 		fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0644);
 		if (fd == -1) {
