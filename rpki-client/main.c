@@ -1099,6 +1099,7 @@ main(int argc, char *argv[])
 	int		 fd[2];
 	struct entityq	 q;
 	struct pollfd	 pfd[4];
+	struct msgbuf	*queues[4];
 	struct roa	**out = NULL;
 	char		*rsync_prog = "openrsync";
 	char		*bind_addr = NULL;
@@ -1360,9 +1361,13 @@ main(int argc, char *argv[])
 	 */
 
 	pfd[0].fd = rsync;
+	queues[0] = &rsyncq;
 	pfd[1].fd = proc;
+	queues[1] = &procq;
 	pfd[2].fd = http;
+	queues[2] = &httpq;
 	pfd[3].fd = rrdp;
+	queues[3] = &rrdpq;
 
 	/*
 	 * Prime the process with our TAL file.
@@ -1374,18 +1379,11 @@ main(int argc, char *argv[])
 		queue_add_tal(&q, tals[i]);
 
 	while (entity_queue > 0 && !killme) {
-		pfd[0].events = POLLIN;
-		if (rsyncq.queued)
-			pfd[0].events |= POLLOUT;
-		pfd[1].events = POLLIN;
-		if (procq.queued)
-			pfd[1].events |= POLLOUT;
-		pfd[2].events = POLLIN;
-		if (httpq.queued)
-			pfd[2].events |= POLLOUT;
-		pfd[3].events = POLLIN;
-		if (rrdpq.queued)
-			pfd[3].events |= POLLOUT;
+		for (i = 0; i < 4; i++) {
+			pfd[i].events = POLLIN;
+			if (queues[i]->queued)
+				pfd[i].events |= POLLOUT;
+		}
 
 		if ((c = poll(pfd, 4, INFTIM)) == -1) {
 			if (errno == EINTR)
@@ -1398,38 +1396,21 @@ main(int argc, char *argv[])
 				errx(1, "poll[%zu]: bad fd", i);
 			if (pfd[i].revents & POLLHUP)
 				errx(1, "poll[%zu]: hangup", i);
-		}
-
-		if (pfd[0].revents & POLLOUT) {
-			switch (msgbuf_write(&rsyncq)) {
-			case 0:
-				errx(1, "write: connection closed");
-			case -1:
-				err(1, "write");
-			}
-		}
-		if (pfd[1].revents & POLLOUT) {
-			switch (msgbuf_write(&procq)) {
-			case 0:
-				errx(1, "write: connection closed");
-			case -1:
-				err(1, "write");
-			}
-		}
-		if (pfd[2].revents & POLLOUT) {
-			switch (msgbuf_write(&httpq)) {
-			case 0:
-				errx(1, "write: connection closed");
-			case -1:
-				err(1, "write");
-			}
-		}
-		if (pfd[3].revents & POLLOUT) {
-			switch (msgbuf_write(&rrdpq)) {
-			case 0:
-				errx(1, "write: connection closed");
-			case -1:
-				err(1, "write");
+			if (pfd[i].revents & POLLOUT) {
+				/*
+				 * XXX work around deadlocks because of
+				 * blocking vs non-blocking sockets.
+				 */
+				if (i > 1)
+					io_socket_nonblocking(pfd[i].fd);
+				switch (msgbuf_write(queues[i])) {
+				case 0:
+					errx(1, "write: connection closed");
+				case -1:
+					err(1, "write");
+				}
+				if (i > 1)
+					io_socket_blocking(pfd[i].fd);
 			}
 		}
 
@@ -1456,7 +1437,6 @@ main(int argc, char *argv[])
 			stats.repos++;
 			entityq_flush(&q, &rt.repos[i]);
 		}
-
 		if ((pfd[2].revents & POLLIN)) {
 			int status;
 			char *last_mod;
