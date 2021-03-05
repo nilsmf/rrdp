@@ -392,6 +392,11 @@ notification_get_next(struct notification_xml *nxml, char *hash, size_t hlen,
 	case SNAPSHOT:
 		assert(hlen == sizeof(nxml->snapshot_hash));
 		memcpy(hash, nxml->snapshot_hash, hlen);
+		/*
+		 * Ensure that the serial is correct in case a previous
+		 * delta request failed.
+		 */
+		nxml->current->serial = nxml->serial;
 		return nxml->snapshot_uri;
 	case DELTA:
 		/* first bump serial, then use first delta  */
