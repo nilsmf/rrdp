@@ -184,6 +184,9 @@ sbgp_sia_resource_mft(struct parse *p, const char *d, size_t dsz)
 		return 0;
 	}
 
+	if ((p->res->mft = strndup(d, dsz)) == NULL)
+		err(1, NULL);
+
 	return 1;
 }
 
