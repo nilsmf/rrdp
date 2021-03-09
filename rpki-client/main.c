@@ -104,6 +104,7 @@ const char	*bird_tablename = "ROAS";
 
 int	verbose;
 int	noop;
+int	rrdpon;
 
 struct stats	 stats;
 
@@ -575,6 +576,9 @@ rrdp_fetch(struct repo *rp)
 	struct rrdp_session state = { 0 };
 	struct ibuf *b;
 
+	if (!rrdpon)
+		errx(1, "%s: RRDP is off but trying to fetch", rp->local);
+
 	if (asprintf(&rp->temp, "%s.XXXXXXXX", rp->local) == -1)
 		err(1, NULL);
 	if (mkdtemp(rp->temp) == NULL)
@@ -912,7 +916,7 @@ repo_lookup(const char *uri, const char *notify)
 	if ((rp->local = strdup(local)) == NULL)
 		err(1, NULL);
 	i = 0;
-	if (notify)
+	if (rrdpon && notify != NULL)
 		if ((rp->uris[i++] = strdup(notify)) == NULL)
 			err(1, "strdup");
 	if ((rp->uris[i] = strdup(repo)) == NULL)
@@ -1336,7 +1340,7 @@ main(int argc, char *argv[])
 	    "proc exec unveil", NULL) == -1)
 		err(1, "pledge");
 
-	while ((c = getopt(argc, argv, "b:Bcd:e:jnos:t:T:v")) != -1)
+	while ((c = getopt(argc, argv, "b:Bcd:e:jnoRs:t:T:v")) != -1)
 		switch (c) {
 		case 'b':
 			bind_addr = optarg;
@@ -1361,6 +1365,9 @@ main(int argc, char *argv[])
 			break;
 		case 'o':
 			outformats |= FORMAT_OPENBGPD;
+			break;
+		case 'R':
+			rrdpon = 1;
 			break;
 		case 's':
 			timeout = strtonum(optarg, 0, 24*60*60, &errs);
@@ -1518,7 +1525,7 @@ main(int argc, char *argv[])
 	 * XML files and does this via the main process.
 	 */
 
-	if (!noop) {
+	if (!noop && rrdpon) {
 		if (socketpair(AF_UNIX, fl, 0, fd) == -1)
 			err(1, "socketpair");
 		if ((rrdppid = fork()) == -1)
@@ -1771,11 +1778,13 @@ main(int argc, char *argv[])
 			rc = 1;
 		}
 
-		if (waitpid(rrdppid, &st, 0) == -1)
-			err(1, "waitpid");
-		if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-			warnx("rrdp process exited abnormally");
-			rc = 1;
+		if (rrdpon) {
+			if (waitpid(rrdppid, &st, 0) == -1)
+				err(1, "waitpid");
+			if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+				warnx("rrdp process exited abnormally");
+				rc = 1;
+			}
 		}
 	}
 
