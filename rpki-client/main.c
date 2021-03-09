@@ -377,9 +377,6 @@ rrdp_parse_state(const struct repo *r, struct rrdp_session *state)
 		ln++;
 	}
 
-warnx("%s: PARSE session_id: %s serial: %lld last_mod: %s", r->local,
-state->session_id, state->serial, state->last_mod);
-
 	free(line);
 	if (ferror(f))
 		goto fail;
@@ -403,9 +400,6 @@ rrdp_save_state(const struct repo *r, struct rrdp_session *state)
 	char *temp, *file;
 	FILE *f;
 	int fd;
-
-warnx("%s: SAVE session_id: %s serial: %lld last_mod: %s", r->local,
-state->session_id, state->serial, state->last_mod);
 
 	file = rrdp_state_filename(r, 0);
 	temp = rrdp_state_filename(r, 1);

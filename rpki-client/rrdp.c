@@ -158,7 +158,6 @@ rrdp_fetch(size_t id, const char *uri, const char *last_mod)
 	enum rrdp_msg type = RRDP_HTTP_REQ;
 	struct ibuf *b;
 
-warnx("FETCH: uri: %s", uri);
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
@@ -403,8 +402,6 @@ rrdp_input_handler(int fd)
 			errx(1, "received unexpected fd %d", infd);
 
 		s = rrdp_new(id, local, notify, session_id, serial, last_mod);
-
-warnx("START: local: %s notify: %s", local, notify);
 		break;
 	case RRDP_HTTP_INI:
 		if (infd == -1)
@@ -415,7 +412,6 @@ warnx("START: local: %s notify: %s", local, notify);
 		if (s->state != RRDP_STATE_WAIT)
 			errx(1, "%s: bad internal state", s->local);
 
-warnx("%s: INI got infd %d, id %zu", s->local, infd, id);
 		s->infd = infd;
 		s->state = RRDP_STATE_PARSE;
 		break;
@@ -431,7 +427,6 @@ warnx("%s: INI got infd %d, id %zu", s->local, infd, id);
 		if (!(s->state & RRDP_STATE_PARSE))
 			errx(1, "%s: bad internal state", s->local);
 
-warnx("%s[%d]: FIN: status: %d last_mod: %s id: %zu", s->local, s->task, status, last_mod, id);
 		s->status = status;
 		s->last_mod = last_mod;
 		s->state |= RRDP_STATE_HTTP_DONE;
@@ -548,7 +543,6 @@ warnx("NOT ENOUGH SESSIONS");
 					errx(1, "%s: bad parser state",
 					    s->local);
 				if (len == 0) {
-warnx("%s: DONE parsing", s->local);
 					/* parser stage finished */
 					close(s->infd);
 					s->infd = -1;
