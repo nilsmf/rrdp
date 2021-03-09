@@ -48,6 +48,9 @@
  */
 #define	TALSZ_MAX	8
 
+struct filepath;
+RB_HEAD(filepath_tree, filepath);
+
 /*
  * An rsync repository.
  */
@@ -60,6 +63,8 @@ struct	repo {
 	size_t		 id;		/* identifier (array index) */
 	int		 uriidx;	/* which URI is fetched */
 	int		 loaded;	/* whether loaded or not */
+	struct filepath_tree	added;
+	struct filepath_tree	deleted;
 };
 
 size_t	entity_queue;
@@ -80,7 +85,7 @@ static struct	repotab {
  */
 struct filepath {
 	RB_ENTRY(filepath)	entry;
-	char			*file;
+	const char		*file;
 };
 
 static inline int
@@ -89,7 +94,6 @@ filepathcmp(struct filepath *a, struct filepath *b)
 	return strcasecmp(a->file, b->file);
 }
 
-RB_HEAD(filepath_tree, filepath);
 RB_PROTOTYPE(filepath_tree, filepath, entry, filepathcmp);
 
 static struct filepath_tree	fpt = RB_INITIALIZER(&fpt);
@@ -126,7 +130,7 @@ logx(const char *fmt, ...)
  * Functions to lookup which files have been accessed during computation.
  */
 static void
-filepath_add(char *file)
+filepath_add(struct filepath_tree *tree, const char *file)
 {
 	struct filepath *fp;
 
@@ -135,23 +139,33 @@ filepath_add(char *file)
 	if ((fp->file = strdup(file)) == NULL)
 		err(1, NULL);
 
-	if (RB_INSERT(filepath_tree, &fpt, fp) != NULL) {
+	if (RB_INSERT(filepath_tree, tree, fp) != NULL) {
 		/* already in the tree */
-		free(fp->file);
-		free(fp);
+		errx(1, "%s: File already visited", fp->file);
 	}
 }
 
-static int
-filepath_exists(char *file)
+static struct filepath *
+filepath_find(struct filepath_tree *tree, const char *file)
 {
 	struct filepath needle;
 
-	if (strcmp(file + strlen(file) - strlen("/.state"), "/.state") == 0)
-		return 1;
-
 	needle.file = file;
-	return RB_FIND(filepath_tree, &fpt, &needle) != NULL;
+	return RB_FIND(filepath_tree, tree, &needle);
+}
+
+static int
+filepath_exists(struct filepath_tree *tree, const char *file)
+{
+	return filepath_find(tree, file) != NULL;
+}
+
+static void
+filepath_put(struct filepath_tree *tree, struct filepath *fp)
+{
+	RB_REMOVE(filepath_tree, tree, fp);
+	free((void *)fp->file);
+	free(fp);
 }
 
 RB_GENERATE(filepath_tree, filepath, entry, filepathcmp);
@@ -251,7 +265,7 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
 		if ((p->descr = strdup(descr)) == NULL)
 			err(1, NULL);
 
-	filepath_add(file);
+	filepath_add(&fpt, file);
 
 	entity_queue++;
 
@@ -265,6 +279,24 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
 		entity_free(p);
 	} else
 		TAILQ_INSERT_TAIL(q, p, entries);
+}
+
+/*
+ * Function to create all missing directories to a path.
+ * This functions alters the path temporarily.
+ */
+static void
+repo_mkpath(char *file)
+{
+	char *slash;
+
+	/* build directory hierarchy */
+	slash = strrchr(file, '/');
+	assert(slash != NULL);
+	*slash = '\0';
+	if (mkpath(file) == -1)
+		err(1, "%s", file);
+	*slash = '/';
 }
 
 /*
@@ -445,9 +477,10 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
     char *hash, size_t hlen, char *data, size_t dlen)
 {
 	enum rrdp_msg type = RRDP_FILE;
+	struct filepath *fp;
 	struct ibuf *b;
 	ssize_t s;
-	char *fn, *slash;
+	char *fn;
 	int fd;
 	int ok = 0;
 
@@ -466,10 +499,19 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 	}
 
 	if (pt == PUB_UPD || pt == PUB_DEL) {
-		/* TODO check if file exists in temp dir already */
-
-		if ((fn = repo_filename(rp, uri, 0)) == NULL)
+		if (filepath_exists(&rp->deleted, uri)) {
+			warnx("%s: already deleted", uri);
 			goto done;
+		}
+		fp = filepath_find(&rp->added, uri);
+		if (fp == NULL) {
+			if ((fn = repo_filename(rp, uri, 0)) == NULL)
+				goto done;
+		} else {
+			filepath_put(&rp->added, fp);
+			if ((fn = repo_filename(rp, uri, 1)) == NULL)
+				goto done;
+		}
 		if (!valid_filehash(fn, hash, hlen)) {
 			warnx("%s: bad message digest", fn);
 			free(fn);
@@ -479,20 +521,13 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 	}
 
 	if (pt == PUB_DEL) {
-		/* TODO remember file to delete */
+		filepath_add(&rp->deleted, uri);
 	} else {
 		/* add new file to temp dir */
-		if ((fn = repo_filename(rp, uri, 0 /* XXX 1 */)) == NULL)
+		if ((fn = repo_filename(rp, uri, 1)) == NULL)
 			goto done;
 
-		/* build directory hierarchy */
-		slash = strrchr(fn, '/');
-		assert(slash != NULL);
-		*slash = '\0';
-		if (mkpath(fn) == -1)
-			err(1, "%s", fn);
-		*slash = '/';
-
+		repo_mkpath(fn);
 		fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0644);
 		if (fd == -1) {
 			warn("open %s", fn);
@@ -513,6 +548,7 @@ rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
 			goto done;
 		}
 		free(fn);
+		filepath_add(&rp->added, uri);
 	}
 
 	/* all OK */
@@ -560,6 +596,56 @@ rrdp_fetch(struct repo *rp)
 	free(state.session_id);
 	free(state.last_mod);
 }
+
+static void
+rrdp_merge_repo(struct repo *rp)
+{
+	struct filepath *fp, *nfp;
+	char *fn, *rfn;
+
+	/* XXX should delay deletes */
+	RB_FOREACH_SAFE(fp, filepath_tree, &rp->deleted, nfp) {
+		if ((fn = repo_filename(rp, fp->file, 0)) != NULL) {
+			if (unlink(fn) == -1)
+				warn("%s: unlink", fn);
+			free(fn);
+		}
+		filepath_put(&rp->deleted, fp);
+	}
+
+	RB_FOREACH_SAFE(fp, filepath_tree, &rp->added, nfp) {
+		if ((fn = repo_filename(rp, fp->file, 1)) != NULL &&
+		    (rfn = repo_filename(rp, fp->file, 0)) != NULL) {
+			repo_mkpath(rfn);
+			if (rename(fn, rfn) == -1)
+				warn("%s: link", rfn);
+			free(rfn);
+		}
+		free(fn);
+		filepath_put(&rp->added, fp);
+	}
+}
+
+static void
+rrdp_clean_temp(struct repo *rp)
+{
+	struct filepath *fp, *nfp;
+	char *fn;
+
+	RB_FOREACH_SAFE(fp, filepath_tree, &rp->deleted, nfp) {
+		filepath_put(&rp->deleted, fp);
+	}
+
+	RB_FOREACH_SAFE(fp, filepath_tree, &rp->added, nfp) {
+		if ((fn = repo_filename(rp, fp->file, 1)) != NULL) {
+			if (unlink(fn) == -1)
+				warn("%s: unlink", fn);
+			free(fn);
+		}
+		filepath_put(&rp->added, fp);
+	}
+}
+
 /*
  * RRDP fetch finalized, either with or without success.
  */
@@ -567,20 +653,20 @@ static int
 rrdp_done(struct repo *rp, int ok)
 {
 	if (ok) {
+		rrdp_merge_repo(rp);
 		logx("%s: loaded from network", rp->local);
-		/* TODO merge temp dir into repo */
 	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
 	    rp->uris[rp->uriidx + 1] != NULL) {
+		rrdp_clean_temp(rp);
 		logx("%s: load from network failed, retry", rp->local);
-		/* TODO clear and remove temp dir */
 
 		rp->uriidx++;
 		repo_fetch(rp);
 		return 0;
 	} else {
+		rrdp_clean_temp(rp);
 		logx("%s: load from network failed, "
 		    "fallback to cache", rp->local);
-		/* TODO clear and remove temp dir */
 	}
 	return 1;
 }
@@ -600,6 +686,8 @@ repo_alloc(void)
 
 	rp = &rt.repos[rt.reposz++];
 	rp->id = rt.reposz - 1;
+	RB_INIT(&rp->added);
+	RB_INIT(&rp->deleted);
 
 	return rp;
 }
@@ -1135,14 +1223,14 @@ static size_t
 repo_cleanup(void)
 {
 	size_t i, delsz = 0;
-	char *argv[2], **del = NULL;
+	char *argv[3], **del = NULL;
 	FTS *fts;
 	FTSENT *e;
 
 	for (i = 0; i < rt.reposz; i++) {
-		if (asprintf(&argv[0], "%s", rt.repos[i].local) == -1)
-			err(1, NULL);
-		argv[1] = NULL;
+		argv[0] = rt.repos[i].local;
+		argv[1] = rt.repos[i].temp;
+		argv[2] = NULL;
 		if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT,
 		    NULL)) == NULL)
 			err(1, "fts_open");
@@ -1150,13 +1238,18 @@ repo_cleanup(void)
 		while ((e = fts_read(fts)) != NULL) {
 			switch (e->fts_info) {
 			case FTS_NSOK:
-				if (!filepath_exists(e->fts_path))
+				if (!filepath_exists(&fpt, e->fts_path))
 					del = add_to_del(del, &delsz,
 					    e->fts_path);
 				break;
 			case FTS_D:
+				break;
 			case FTS_DP:
-				/* TODO empty directory pruning */
+				if (rmdir(e->fts_accpath) == -1) {
+					if (errno != ENOTEMPTY)
+						warn("rmdir %s", e->fts_path);
+				} else if (verbose > 1)
+					logx("deleted %s", e->fts_path);
 				break;
 			case FTS_SL:
 			case FTS_SLNONE:
