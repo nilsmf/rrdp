@@ -146,6 +146,9 @@ filepath_add(struct filepath_tree *tree, const char *file)
 	}
 }
 
+/*
+ * Lookup a file path in the tree and return the object if found or NULL.
+ */
 static struct filepath *
 filepath_find(struct filepath_tree *tree, const char *file)
 {
@@ -155,12 +158,18 @@ filepath_find(struct filepath_tree *tree, const char *file)
 	return RB_FIND(filepath_tree, tree, &needle);
 }
 
+/*
+ * Returns true if file exists in the tree.
+ */
 static int
 filepath_exists(struct filepath_tree *tree, const char *file)
 {
 	return filepath_find(tree, file) != NULL;
 }
 
+/*
+ * Remove entry from tree and free it.
+ */
 static void
 filepath_put(struct filepath_tree *tree, struct filepath *fp)
 {
