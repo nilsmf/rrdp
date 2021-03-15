@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.115 2021/03/10 08:09:41 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.119 2021/03/15 08:56:31 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -56,10 +56,12 @@ RB_HEAD(filepath_tree, filepath);
  */
 #define REPO_MAX_URI	2
 struct	repo {
+	SLIST_ENTRY(repo)	entry;
 	char		*repouri;	/* CA repository base URI */
 	char		*local;		/* local path name */
 	char		*temp;		/* temporary file / dir */
 	char		*uris[REPO_MAX_URI];	/* URIs to fetch from */
+	struct entityq	 queue;		/* files waiting for this repo */
 	size_t		 id;		/* identifier (array index) */
 	int		 uriidx;	/* which URI is fetched */
 	int		 loaded;	/* whether loaded or not */
@@ -75,17 +77,15 @@ void	suicide(int sig);
 /*
  * Table of all known repositories.
  */
-static struct	repotab {
-	struct repo	*repos; /* repositories */
-	size_t		 reposz; /* number of repos */
-} rt;
+SLIST_HEAD(, repo)	repos = SLIST_HEAD_INITIALIZER(repos);
+size_t			repoid;
 
 /*
  * Database of all file path accessed during a run.
  */
 struct filepath {
 	RB_ENTRY(filepath)	entry;
-	const char		*file;
+	char			*file;
 };
 
 static inline int
@@ -130,8 +130,8 @@ logx(const char *fmt, ...)
 /*
  * Functions to lookup which files have been accessed during computation.
  */
-static void
-filepath_add(struct filepath_tree *tree, const char *file)
+static int
+filepath_add(struct filepath_tree *tree, char *file)
 {
 	struct filepath *fp;
 
@@ -142,15 +142,19 @@ filepath_add(struct filepath_tree *tree, const char *file)
 
 	if (RB_INSERT(filepath_tree, tree, fp) != NULL) {
 		/* already in the tree */
-		errx(1, "%s: File already visited", fp->file);
+		free(fp->file);
+		free(fp);
+		return 0;
 	}
+
+	return 1;
 }
 
 /*
  * Lookup a file path in the tree and return the object if found or NULL.
  */
 static struct filepath *
-filepath_find(struct filepath_tree *tree, const char *file)
+filepath_find(struct filepath_tree *tree, char *file)
 {
 	struct filepath needle;
 
@@ -162,7 +166,7 @@ filepath_find(struct filepath_tree *tree, const char *file)
  * Returns true if file exists in the tree.
  */
 static int
-filepath_exists(struct filepath_tree *tree, const char *file)
+filepath_exists(struct filepath_tree *tree, char *file)
 {
 	return filepath_find(tree, file) != NULL;
 }
@@ -235,15 +239,13 @@ entity_write_req(const struct entity *ent)
  * repo, then flush those into the parser process.
  */
 static void
-entityq_flush(struct entityq *q, const struct repo *repo)
+entityq_flush(struct repo *repo)
 {
 	struct entity	*p, *np;
 
-	TAILQ_FOREACH_SAFE(p, q, entries, np) {
-		if (p->repo < 0 || repo->id != (size_t)p->repo)
-			continue;
+	TAILQ_FOREACH_SAFE(p, &repo->queue, entries, np) {
 		entity_write_req(p);
-		TAILQ_REMOVE(q, p, entries);
+		TAILQ_REMOVE(&repo->queue, p, entries);
 		entity_free(p);
 	}
 }
@@ -252,18 +254,21 @@ entityq_flush(struct entityq *q, const struct repo *repo)
  * Add the heap-allocated file to the queue for processing.
  */
 static void
-entityq_add(struct entityq *q, char *file, enum rtype type,
-    const struct repo *rp, const unsigned char *pkey, size_t pkeysz,
-    char *descr)
+entityq_add(char *file, enum rtype type, struct repo *rp,
+    const unsigned char *pkey, size_t pkeysz, char *descr)
 {
 	struct entity	*p;
+
+	if (filepath_add(&fpt, file) == 0) {
+		warnx("%s: File already visited", file);
+		return;
+	}
 
 	if ((p = calloc(1, sizeof(struct entity))) == NULL)
 		err(1, NULL);
 
 	p->type = type;
 	p->file = file;
-	p->repo = (rp != NULL) ? (ssize_t)rp->id : -1;
 	p->has_pkey = pkey != NULL;
 	if (p->has_pkey) {
 		p->pkeysz = pkeysz;
@@ -274,8 +279,6 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
 	if (descr != NULL)
 		if ((p->descr = strdup(descr)) == NULL)
 			err(1, NULL);
-
-	filepath_add(&fpt, file);
 
 	entity_queue++;
 
@@ -288,7 +291,7 @@ entityq_add(struct entityq *q, char *file, enum rtype type,
 		entity_write_req(p);
 		entity_free(p);
 	} else
-		TAILQ_INSERT_TAIL(q, p, entries);
+		TAILQ_INSERT_TAIL(&rp->queue, p, entries);
 }
 
 /*
@@ -685,23 +688,33 @@ rrdp_done(struct repo *rp, int ok)
 }
 
 /*
- * Allocat a new repository be extending the repotable.
+ * Allocate and insert a new repository.
  */
 static struct repo *
 repo_alloc(void)
 {
 	struct repo *rp;
 
-	rt.repos = recallocarray(rt.repos, rt.reposz, rt.reposz + 1,
-	    sizeof(struct repo));
-	if (rt.repos == NULL)
+	if ((rp = calloc(1, sizeof(*rp))) == NULL)
 		err(1, NULL);
 
-	rp = &rt.repos[rt.reposz++];
-	rp->id = rt.reposz - 1;
+	rp->id = ++repoid;
 	RB_INIT(&rp->added);
 	RB_INIT(&rp->deleted);
+	TAILQ_INIT(&rp->queue);
+	SLIST_INSERT_HEAD(&repos, rp, entry);
 
+	return rp;
+}
+
+static struct repo *
+repo_find(size_t id)
+{
+	struct repo *rp;
+
+	SLIST_FOREACH(rp, &repos, entry)
+		if (id == rp->id)
+			break;
 	return rp;
 }
 
@@ -866,7 +879,7 @@ repo_fetch(struct repo *rp)
 /*
  * Look up a trust anchor, queueing it for download if not found.
  */
-static const struct repo *
+static struct repo *
 ta_lookup(const struct tal *tal)
 {
 	struct repo	*rp;
@@ -877,11 +890,11 @@ ta_lookup(const struct tal *tal)
 		err(1, NULL);
 
 	/* Look up in repository table. (Lookup should actually fail here) */
-	for (i = 0; i < rt.reposz; i++) {
-		if (strcmp(rt.repos[i].local, local) != 0)
+	SLIST_FOREACH(rp, &repos, entry) {
+		if (strcmp(rp->local, local) != 0)
 			continue;
 		free(local);
-		return &rt.repos[i];
+		return rp;
 	}
 
 	rp = repo_alloc();
@@ -900,7 +913,7 @@ ta_lookup(const struct tal *tal)
 /*
  * Look up a repository, queueing it for discovery if not found.
  */
-static const struct repo *
+static struct repo *
 repo_lookup(const char *uri, const char *notify)
 {
 	char		*local, *repo;
@@ -911,12 +924,12 @@ repo_lookup(const char *uri, const char *notify)
 		return NULL;
 
 	/* Look up in repository table. */
-	for (i = 0; i < rt.reposz; i++) {
-		if (rt.repos[i].repouri == NULL ||
-		    strcmp(rt.repos[i].repouri, repo) != 0)
+	SLIST_FOREACH(rp, &repos, entry) {
+		if (rp->repouri == NULL ||
+		    strcmp(rp->repouri, repo) != 0)
 			continue;
 		free(repo);
-		return &rt.repos[i];
+		return rp;
 	}
 
 	rp = repo_alloc();
@@ -940,8 +953,7 @@ repo_lookup(const char *uri, const char *notify)
  * These are always relative to the directory in which "mft" sits.
  */
 static void
-queue_add_from_mft(struct entityq *q, const char *mft,
-    const struct mftfile *file, enum rtype type)
+queue_add_from_mft(const char *mft, const struct mftfile *file, enum rtype type)
 {
 	char		*cp, *nfile;
 
@@ -957,7 +969,7 @@ queue_add_from_mft(struct entityq *q, const char *mft,
 	 * that the repository has already been loaded.
 	 */
 
-	entityq_add(q, nfile, type, NULL, NULL, 0, NULL);
+	entityq_add(nfile, type, NULL, NULL, 0, NULL);
 }
 
 /*
@@ -969,7 +981,7 @@ queue_add_from_mft(struct entityq *q, const char *mft,
  * check the suffix anyway).
  */
 static void
-queue_add_from_mft_set(struct entityq *q, const struct mft *mft)
+queue_add_from_mft_set(const struct mft *mft)
 {
 	size_t			 i, sz;
 	const struct mftfile	*f;
@@ -980,7 +992,7 @@ queue_add_from_mft_set(struct entityq *q, const struct mft *mft)
 		assert(sz > 4);
 		if (strcasecmp(f->file + sz - 4, ".crl") != 0)
 			continue;
-		queue_add_from_mft(q, mft->file, f, RTYPE_CRL);
+		queue_add_from_mft(mft->file, f, RTYPE_CRL);
 	}
 
 	for (i = 0; i < mft->filesz; i++) {
@@ -990,11 +1002,11 @@ queue_add_from_mft_set(struct entityq *q, const struct mft *mft)
 		if (strcasecmp(f->file + sz - 4, ".crl") == 0)
 			continue;
 		else if (strcasecmp(f->file + sz - 4, ".cer") == 0)
-			queue_add_from_mft(q, mft->file, f, RTYPE_CER);
+			queue_add_from_mft(mft->file, f, RTYPE_CER);
 		else if (strcasecmp(f->file + sz - 4, ".roa") == 0)
-			queue_add_from_mft(q, mft->file, f, RTYPE_ROA);
+			queue_add_from_mft(mft->file, f, RTYPE_ROA);
 		else if (strcasecmp(f->file + sz - 4, ".gbr") == 0)
-			queue_add_from_mft(q, mft->file, f, RTYPE_GBR);
+			queue_add_from_mft(mft->file, f, RTYPE_GBR);
 		else
 			logx("%s: unsupported file type: %s", mft->file,
 			    f->file);
@@ -1005,7 +1017,7 @@ queue_add_from_mft_set(struct entityq *q, const struct mft *mft)
  * Add a local TAL file (RFC 7730) to the queue of files to fetch.
  */
 static void
-queue_add_tal(struct entityq *q, const char *file)
+queue_add_tal(const char *file)
 {
 	char	*nfile, *buf;
 
@@ -1026,7 +1038,7 @@ queue_add_tal(struct entityq *q, const char *file)
 	}
 
 	/* Not in a repository, so directly add to queue. */
-	entityq_add(q, nfile, RTYPE_TAL, NULL, NULL, 0, buf);
+	entityq_add(nfile, RTYPE_TAL, NULL, NULL, 0, buf);
 	/* entityq_add makes a copy of buf */
 	free(buf);
 }
@@ -1035,10 +1047,10 @@ queue_add_tal(struct entityq *q, const char *file)
  * Add URIs (CER) from a TAL file, RFC 8630.
  */
 static void
-queue_add_from_tal(struct entityq *q, const struct tal *tal)
+queue_add_from_tal(const struct tal *tal)
 {
-	char			*nfile;
-	const struct repo	*repo;
+	char		*nfile;
+	struct repo	*repo;
 
 	assert(tal->urisz);
 
@@ -1046,7 +1058,7 @@ queue_add_from_tal(struct entityq *q, const struct tal *tal)
 	repo = ta_lookup(tal);
 
 	nfile = ta_filename(repo, 0);
-	entityq_add(q, nfile, RTYPE_CER, repo, tal->pkey,
+	entityq_add(nfile, RTYPE_CER, repo, tal->pkey,
 	    tal->pkeysz, tal->descr);
 }
 
@@ -1054,10 +1066,10 @@ queue_add_from_tal(struct entityq *q, const struct tal *tal)
  * Add a manifest (MFT) found in an X509 certificate, RFC 6487.
  */
 static void
-queue_add_from_cert(struct entityq *q, const struct cert *cert)
+queue_add_from_cert(const struct cert *cert)
 {
-	const struct repo	*repo;
-	char			*nfile;
+	struct repo	*repo;
+	char		*nfile;
 
 	repo = repo_lookup(cert->repo, cert->notify);
 	if (repo == NULL) {
@@ -1069,7 +1081,7 @@ queue_add_from_cert(struct entityq *q, const struct cert *cert)
 	if (nfile == NULL)
 		return;
 
-	entityq_add(q, nfile, RTYPE_MFT, repo, NULL, 0, NULL);
+	entityq_add(nfile, RTYPE_MFT, repo, NULL, 0, NULL);
 }
 
 /*
@@ -1079,8 +1091,7 @@ queue_add_from_cert(struct entityq *q, const struct cert *cert)
  * In all cases, we gather statistics.
  */
 static void
-entity_process(int proc, struct stats *st, struct entityq *q,
-    struct vrp_tree *tree)
+entity_process(int proc, struct stats *st, struct vrp_tree *tree)
 {
 	enum rtype	type;
 	struct tal	*tal;
@@ -1101,7 +1112,7 @@ entity_process(int proc, struct stats *st, struct entityq *q,
 	case RTYPE_TAL:
 		st->tals++;
 		tal = tal_read(proc);
-		queue_add_from_tal(q, tal);
+		queue_add_from_tal(tal);
 		tal_free(tal);
 		break;
 	case RTYPE_CER:
@@ -1119,7 +1130,7 @@ entity_process(int proc, struct stats *st, struct entityq *q,
 			 * we're revoked and then we don't want to
 			 * process the MFT.
 			 */
-			queue_add_from_cert(q, cert);
+			queue_add_from_cert(cert);
 		} else
 			st->certs_invalid++;
 		cert_free(cert);
@@ -1134,7 +1145,7 @@ entity_process(int proc, struct stats *st, struct entityq *q,
 		mft = mft_read(proc);
 		if (mft->stale)
 			st->mfts_stale++;
-		queue_add_from_mft_set(q, mft);
+		queue_add_from_mft_set(mft);
 		mft_free(mft);
 		break;
 	case RTYPE_CRL:
@@ -1215,12 +1226,13 @@ repo_cleanup(void)
 {
 	size_t i, delsz = 0;
 	char *argv[3], **del = NULL;
+	struct repo *rp;
 	FTS *fts;
 	FTSENT *e;
 
-	for (i = 0; i < rt.reposz; i++) {
-		argv[0] = rt.repos[i].local;
-		argv[1] = rt.repos[i].temp;
+	SLIST_FOREACH(rp, &repos, entry) {
+		argv[0] = rp->local;
+		argv[1] = rp->temp;
 		argv[2] = NULL;
 		if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT,
 		    NULL)) == NULL)
@@ -1290,13 +1302,13 @@ main(int argc, char *argv[])
 {
 	int		 rc = 1, c, st, proc, rsync, http, rrdp, ok,
 			 fl = SOCK_STREAM | SOCK_CLOEXEC;
-	size_t		 i, outsz = 0, talsz = 0;
+	size_t		 i, id, outsz = 0, talsz = 0;
 	pid_t		 procpid, rsyncpid, httppid, rrdppid;
 	int		 fd[2];
-	struct entityq	 q;
 	struct pollfd	 pfd[4];
 	struct msgbuf	*queues[4];
 	struct roa	**out = NULL;
+	struct repo	*rp;
 	char		*rsync_prog = "openrsync";
 	char		*bind_addr = NULL;
 	const char	*cachedir = NULL, *outputdir = NULL;
@@ -1411,8 +1423,6 @@ main(int argc, char *argv[])
 		talsz = tal_load_default(tals, TALSZ_MAX);
 	if (talsz == 0)
 		err(1, "no TAL files found in %s", "/etc/rpki");
-
-	TAILQ_INIT(&q);
 
 	/* change working directory to the cache directory */
 	if (fchdir(cachefd) == -1)
@@ -1575,7 +1585,7 @@ main(int argc, char *argv[])
 	 */
 
 	for (i = 0; i < talsz; i++)
-		queue_add_tal(&q, tals[i]);
+		queue_add_tal(tals[i]);
 
 	while (entity_queue > 0 && !killme) {
 		for (i = 0; i < 4; i++) {
@@ -1621,36 +1631,41 @@ main(int argc, char *argv[])
 		 */
 
 		if ((pfd[0].revents & POLLIN)) {
-			io_simple_read(rsync, &i, sizeof(i));
+			io_simple_read(rsync, &id, sizeof(id));
 			io_simple_read(rsync, &ok, sizeof(ok));
-			assert(i < rt.reposz);
 
-			assert(!rt.repos[i].loaded);
+			rp = repo_find(id);
+			if (rp == NULL)
+				errx(1, "unknown repository id: %zu", id);
+
+			assert(!rp->loaded);
 			if (ok)
-				logx("%s: loaded from network",
-				    rt.repos[i].local);
+				logx("%s: loaded from network", rp->local);
 			else
 				logx("%s: load from network failed, "
-				    "fallback to cache", rt.repos[i].local);
-			rt.repos[i].loaded = 1;
+				    "fallback to cache", rp->local);
+			rp->loaded = 1;
 			stats.repos++;
-			entityq_flush(&q, &rt.repos[i]);
+			entityq_flush(rp);
 		}
 		if ((pfd[2].revents & POLLIN)) {
 			int status;
 			char *last_mod;
 
-			io_simple_read(http, &i, sizeof(i));
+			io_simple_read(http, &id, sizeof(id));
 			io_simple_read(http, &ok, sizeof(ok));
 			io_simple_read(http, &status, sizeof(status));
 			io_str_read(http, &last_mod);
-			assert(i < rt.reposz);
 
-			assert(!rt.repos[i].loaded);
-			if (http_done(&rt.repos[i], ok, status, last_mod)) {
-				rt.repos[i].loaded = 1;
+			rp = repo_find(id);
+			if (rp == NULL)
+				errx(1, "unknown repository id: %zu", id);
+
+			assert(!rp->loaded);
+			if (http_done(rp, ok, status, last_mod)) {
+				rp->loaded = 1;
 				stats.repos++;
-				entityq_flush(&q, &rt.repos[i]);
+				entityq_flush(rp);
 			}
 			free(last_mod);
 		}
@@ -1667,30 +1682,33 @@ main(int argc, char *argv[])
 			size_t dsz;
 
 			io_simple_read(rrdp, &type, sizeof(type));
-			io_simple_read(rrdp, &i, sizeof(i));
-			assert(i < rt.reposz);
+			io_simple_read(rrdp, &id, sizeof(id));
 
-			assert(!rt.repos[i].loaded);
+			rp = repo_find(id);
+			if (rp == NULL)
+				errx(1, "unknown repository id: %zu", id);
+
+			assert(!rp->loaded);
 			switch (type) {
 			case RRDP_END:
 				io_simple_read(rrdp, &ok, sizeof(ok));
-				if (rrdp_done(&rt.repos[i], ok)) {
-					rt.repos[i].loaded = 1;
+				if (rrdp_done(rp, ok)) {
+					rp->loaded = 1;
 					stats.repos++;
-					entityq_flush(&q, &rt.repos[i]);
+					entityq_flush(rp);
 				}
 				break;
 			case RRDP_HTTP_REQ:
 				io_str_read(rrdp, &uri);
 				io_str_read(rrdp, &last_mod);
-				http_rrdp_fetch(i, uri, last_mod);
+				http_rrdp_fetch(id, uri, last_mod);
 				break;
 			case RRDP_SESSION:
 				io_str_read(rrdp, &s.session_id);
 				io_simple_read(rrdp, &s.serial,
 				    sizeof(s.serial));
 				io_str_read(rrdp, &s.last_mod);
-				rrdp_save_state(&rt.repos[i], &s);
+				rrdp_save_state(rp, &s);
 				free(s.session_id);
 				free(s.last_mod);
 				break;
@@ -1702,7 +1720,7 @@ main(int argc, char *argv[])
 				io_str_read(rrdp, &uri);
 				io_buf_read_alloc(rrdp, (void **)&data, &dsz);
 
-				rrdp_handle_file(&rt.repos[i], pt, uri,
+				rrdp_handle_file(rp, pt, uri,
 				    hash, sizeof(hash), data, dsz);
 
 				free(uri);
@@ -1719,7 +1737,7 @@ main(int argc, char *argv[])
 		 */
 
 		if ((pfd[1].revents & POLLIN)) {
-			entity_process(proc, &stats, &q, &v);
+			entity_process(proc, &stats, &v);
 		}
 	}
 
@@ -1729,7 +1747,7 @@ main(int argc, char *argv[])
 		errx(1, "excessive runtime (%d seconds), giving up", timeout);
 	}
 
-	assert(TAILQ_EMPTY(&q));
+	assert(entity_queue == 0);
 	logx("all files parsed: generating output");
 	rc = 0;
 
@@ -1810,14 +1828,15 @@ main(int argc, char *argv[])
 	logx("VRP Entries: %zu (%zu unique)", stats.vrps, stats.uniqs);
 
 	/* Memory cleanup. */
-	for (i = 0; i < rt.reposz; i++) {
-		free(rt.repos[i].repouri);
-		free(rt.repos[i].local);
-		free(rt.repos[i].temp);
-		free(rt.repos[i].uris[0]);
-		free(rt.repos[i].uris[1]);
+	while ((rp = SLIST_FIRST(&repos)) != NULL) {
+		SLIST_REMOVE_HEAD(&repos, entry);
+		free(rp->repouri);
+		free(rp->local);
+		free(rp->temp);
+		free(rp->uris[0]);
+		free(rp->uris[1]);
+		free(rp);
 	}
-	free(rt.repos);
 
 	for (i = 0; i < outsz; i++)
 		roa_free(out[i]);
