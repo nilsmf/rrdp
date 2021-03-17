@@ -153,7 +153,7 @@ rrdp_done(size_t id, int ok)
  * should be set to NULL, else it should point to a proper date string.
  */
 static void
-rrdp_fetch(size_t id, const char *uri, const char *last_mod)
+rrdp_http_req(size_t id, const char *uri, const char *last_mod)
 {
 	enum rrdp_msg type = RRDP_HTTP_REQ;
 	struct ibuf *b;
@@ -480,7 +480,7 @@ warnx("NOT ENOUGH SESSIONS");
 				const char *uri;
 				switch (s->task) {
 				case NOTIFICATION:
-					rrdp_fetch(s->id, s->notifyuri,
+					rrdp_http_req(s->id, s->notifyuri,
 					    s->repository.last_mod);
 					break;
 				case SNAPSHOT:
@@ -489,7 +489,7 @@ warnx("NOT ENOUGH SESSIONS");
 					    s->hash, sizeof(s->hash),
 					    s->task);
 					SHA256_Init(&s->ctx);
-					rrdp_fetch(s->id, uri, NULL);
+					rrdp_http_req(s->id, uri, NULL);
 					break;
 				}
 				s->state = RRDP_STATE_WAIT;
