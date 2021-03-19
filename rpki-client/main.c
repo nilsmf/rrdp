@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.119 2021/03/15 08:56:31 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.121 2021/03/19 09:43:59 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -1424,10 +1424,6 @@ main(int argc, char *argv[])
 	if (talsz == 0)
 		err(1, "no TAL files found in %s", "/etc/rpki");
 
-	/* change working directory to the cache directory */
-	if (fchdir(cachefd) == -1)
-		err(1, "fchdir");
-
 	/*
 	 * Create the file reader as a jailed child process.
 	 * It will be responsible for reading all of the files (ROAs,
@@ -1441,6 +1437,10 @@ main(int argc, char *argv[])
 
 	if (procpid == 0) {
 		close(fd[1]);
+
+		/* change working directory to the cache directory */
+		if (fchdir(cachefd) == -1)
+			err(1, "fchdir");
 
 		/* Only allow access to the cache directory. */
 		if (unveil(".", "r") == -1)
@@ -1471,6 +1471,10 @@ main(int argc, char *argv[])
 			close(proc);
 			close(fd[1]);
 
+			/* change working directory to the cache directory */
+			if (fchdir(cachefd) == -1)
+				err(1, "fchdir");
+
 			if (pledge("stdio rpath proc exec unveil", NULL) == -1)
 				err(1, "pledge");
 
@@ -1480,8 +1484,10 @@ main(int argc, char *argv[])
 
 		close(fd[0]);
 		rsync = fd[1];
-	} else
+	} else {
 		rsync = -1;
+		rsyncpid = -1;
+	}
 
 	/*
 	 * Create a process that will fetch data via https.
@@ -1513,8 +1519,10 @@ main(int argc, char *argv[])
 
 		close(fd[0]);
 		http = fd[1];
-	} else
+	} else {
 		http = -1;
+		httppid = -1;
+	}
 
 	/*
 	 * Create a process that will process RRDP.
@@ -1586,6 +1594,10 @@ main(int argc, char *argv[])
 
 	for (i = 0; i < talsz; i++)
 		queue_add_tal(tals[i]);
+
+	/* change working directory to the cache directory */
+	if (fchdir(cachefd) == -1)
+		err(1, "fchdir");
 
 	while (entity_queue > 0 && !killme) {
 		for (i = 0; i < 4; i++) {
