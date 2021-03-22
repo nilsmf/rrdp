@@ -18,7 +18,6 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
-#include <sys/stat.h>
 #include <sys/tree.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -29,7 +28,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <fnmatch.h>
-#include <fts.h>
 #include <poll.h>
 #include <pwd.h>
 #include <stdio.h>
@@ -48,53 +46,10 @@
  */
 #define	TALSZ_MAX	8
 
-struct filepath;
-RB_HEAD(filepath_tree, filepath);
-
-/*
- * An rsync repository.
- */
-#define REPO_MAX_URI	2
-struct	repo {
-	SLIST_ENTRY(repo)	entry;
-	char		*repouri;	/* CA repository base URI */
-	char		*local;		/* local path name */
-	char		*temp;		/* temporary file / dir */
-	char		*uris[REPO_MAX_URI];	/* URIs to fetch from */
-	struct entityq	 queue;		/* files waiting for this repo */
-	size_t		 id;		/* identifier (array index) */
-	int		 uriidx;	/* which URI is fetched */
-	int		 loaded;	/* whether loaded or not */
-	struct filepath_tree	added;
-	struct filepath_tree	deleted;
-};
-
 size_t	entity_queue;
 int	timeout = 60*60;
 volatile sig_atomic_t killme;
 void	suicide(int sig);
-
-/*
- * Table of all known repositories.
- */
-SLIST_HEAD(, repo)	repos = SLIST_HEAD_INITIALIZER(repos);
-size_t			repoid;
-
-/*
- * Database of all file path accessed during a run.
- */
-struct filepath {
-	RB_ENTRY(filepath)	entry;
-	char			*file;
-};
-
-static inline int
-filepathcmp(struct filepath *a, struct filepath *b)
-{
-	return strcasecmp(a->file, b->file);
-}
-
-RB_PROTOTYPE(filepath_tree, filepath, entry, filepathcmp);
 
 static struct filepath_tree	fpt = RB_INITIALIZER(&fpt);
 static struct msgbuf		procq, rsyncq, httpq, rrdpq;
@@ -107,9 +62,6 @@ int	noop;
 int	rrdpon;
 
 struct stats	 stats;
-
-static void	 repo_fetch(struct repo *);
-static char	*ta_filename(const struct repo *, int);
 
 /*
  * Log a message to stderr if and only if "verbose" is non-zero.
@@ -126,63 +78,6 @@ logx(const char *fmt, ...)
 		va_end(ap);
 	}
 }
-
-/*
- * Functions to lookup which files have been accessed during computation.
- */
-static int
-filepath_add(struct filepath_tree *tree, char *file)
-{
-	struct filepath *fp;
-
-	if ((fp = malloc(sizeof(*fp))) == NULL)
-		err(1, NULL);
-	if ((fp->file = strdup(file)) == NULL)
-		err(1, NULL);
-
-	if (RB_INSERT(filepath_tree, tree, fp) != NULL) {
-		/* already in the tree */
-		free(fp->file);
-		free(fp);
-		return 0;
-	}
-
-	return 1;
-}
-
-/*
- * Lookup a file path in the tree and return the object if found or NULL.
- */
-static struct filepath *
-filepath_find(struct filepath_tree *tree, char *file)
-{
-	struct filepath needle;
-
-	needle.file = file;
-	return RB_FIND(filepath_tree, tree, &needle);
-}
-
-/*
- * Returns true if file exists in the tree.
- */
-static int
-filepath_exists(struct filepath_tree *tree, char *file)
-{
-	return filepath_find(tree, file) != NULL;
-}
-
-/*
- * Remove entry from tree and free it.
- */
-static void
-filepath_put(struct filepath_tree *tree, struct filepath *fp)
-{
-	RB_REMOVE(filepath_tree, tree, fp);
-	free((void *)fp->file);
-	free(fp);
-}
-
-RB_GENERATE(filepath_tree, filepath, entry, filepathcmp);
 
 void
 entity_free(struct entity *ent)
@@ -238,14 +133,14 @@ entity_write_req(const struct entity *ent)
  * Scan through all queued requests and see which ones are in the given
  * repo, then flush those into the parser process.
  */
-static void
-entityq_flush(struct repo *repo)
+void
+entityq_flush(struct entityq *q)
 {
 	struct entity	*p, *np;
 
-	TAILQ_FOREACH_SAFE(p, &repo->queue, entries, np) {
+	TAILQ_FOREACH_SAFE(p, q, entries, np) {
 		entity_write_req(p);
-		TAILQ_REMOVE(&repo->queue, p, entries);
+		TAILQ_REMOVE(q, p, entries);
 		entity_free(p);
 	}
 }
@@ -287,435 +182,77 @@ entityq_add(char *file, enum rtype type, struct repo *rp,
 	 * been loaded else enqueue it for later.
 	 */
 
-	if (rp == NULL || rp->loaded) {
+	if (rp == NULL || !repo_queued(rp, p)) {
 		entity_write_req(p);
 		entity_free(p);
-	} else
-		TAILQ_INSERT_TAIL(&rp->queue, p, entries);
-}
-
-/*
- * Function to create all missing directories to a path.
- * This functions alters the path temporarily.
- */
-static void
-repo_mkpath(char *file)
-{
-	char *slash;
-
-	/* build directory hierarchy */
-	slash = strrchr(file, '/');
-	assert(slash != NULL);
-	*slash = '\0';
-	if (mkpath(file) == -1)
-		err(1, "%s", file);
-	*slash = '/';
-}
-
-/*
- * Build local file name base on the URI and the repo info.
- */
-static char *
-repo_filename(const struct repo *repo, const char *uri, int temp)
-{
-	char *nfile;
-	char *dir = repo->local;
-
-	if (temp)
-		dir = repo->temp;
-
-	if (strstr(uri, repo->repouri) != uri) {
-		warnx("%s: URI %s outside of repository", repo->local, uri);
-		return NULL;
 	}
-
-	uri += strlen(repo->repouri) + 1;	/* skip base and '/' */
-
-	if (asprintf(&nfile, "%s/%s", dir, uri) == -1)
-		err(1, NULL);
-	return nfile;
-}
-
-/*
- * Build TA file name based on the repo info.
- * If temp is set add Xs for mkostemp.
- */
-static char *
-ta_filename(const struct repo *repo, int temp)
-{
-	const char *file;
-	char *nfile;
-
-	/* does not matter which URI, all end with same filename */
-	file = strrchr(repo->uris[0], '/');
-	assert(file);
-
-	if (asprintf(&nfile, "%s%s%s", repo->local, file,
-	    temp ? ".XXXXXXXX": "") == -1)
-		err(1, NULL);
-
-	return nfile;
-}
-
-/*
- * Build RRDP state file name based on the repo info.
- * If temp is set add Xs for mkostemp.
- */
-static char *
-rrdp_state_filename(const struct repo *repo, int temp)
-{
-	char *nfile;
-
-	if (asprintf(&nfile, "%s/.state%s", repo->local,
-	    temp ? ".XXXXXXXX": "") == -1)
-		err(1, NULL);
-
-	return nfile;
-}
-
-/*
- * Parse the RRDP state file if it exists and set the session struct
- * based on that information.
- */
-static void
-rrdp_parse_state(const struct repo *r, struct rrdp_session *state)
-{
-	FILE *f;
-	int fd, ln = 0;
-	const char *errstr;
-	char *line = NULL, *file;
-	size_t len = 0;
-	ssize_t n;
-
-	file = rrdp_state_filename(r, 0);
-	if ((fd = openat(cachefd, file, O_RDONLY)) == -1) {
-		free(file);
-		if (errno != ENOENT)
-			warn("%s: open state file", r->local);
-		return;
-	}
-	free(file);
-	f = fdopen(fd, "r");
-	if (f == NULL)
-		err(1, "fdopen");
-
-	while ((n = getline(&line, &len, f)) != -1) {
-		if (line[n - 1] == '\n')
-			line[n - 1] = '\0';
-		switch (ln) {
-		case 0:
-			if ((state->session_id = strdup(line)) == NULL)
-				err(1, "%s", __func__);
-			break;
-		case 1:
-			state->serial = strtonum(line, 1, LLONG_MAX, &errstr);
-			if (errstr)
-				goto fail;
-			break;
-		case 2:
-			if ((state->last_mod = strdup(line)) == NULL)
-				err(1, "%s", __func__);
-			break;
-		default:
-			goto fail;
-		}
-		ln++;
-	}
-
-	free(line);
-	if (ferror(f))
-		goto fail;
-	fclose(f);
-	return;
-
-fail:
-	warnx("%s: troubles reading state file", r->local);
-	fclose(f);
-	free(state->session_id);
-	free(state->last_mod);
-	memset(state, 0, sizeof(*state));
-}
-
-/*
- * Carefully write the RRDP session state file back.
- */
-static void
-rrdp_save_state(const struct repo *r, struct rrdp_session *state)
-{
-	char *temp, *file;
-	FILE *f;
-	int fd;
-
-	file = rrdp_state_filename(r, 0);
-	temp = rrdp_state_filename(r, 1);
-
-	if ((fd = mkostemp(temp, O_CLOEXEC)) == -1)
-		err(1, "%s: mkostemp: %s", r->local, temp);
-	(void) fchmod(fd, 0644);
-	f = fdopen(fd, "w");
-	if (f == NULL)
-		err(1, "fdopen");
-
-	/* write session state file out */
-	if (fprintf(f, "%s\n%lld\n", state->session_id,
-	    state->serial) < 0) {
-		fclose(f);
-		goto fail;
-	}
-	if (state->last_mod != NULL) {
-		if (fprintf(f, "%s\n", state->last_mod) < 0) {
-			fclose(f);
-			goto fail;
-		}
-	}
-	if (fclose(f) != 0)
-		goto fail;
-
-	if (renameat(cachefd, temp, cachefd, file) == -1)
-		warn("%s: rename state file", r->local);
-
-	free(temp);
-	free(file);
-	return;
-
-fail:
-	warnx("%s: failed to save state", r->local);
-	unlinkat(cachefd, temp, 0);
-	free(temp);
-	free(file);
 }
 
 static void
-rrdp_handle_file(struct repo *rp, enum publish_type pt, char *uri,
-    char *hash, size_t hlen, char *data, size_t dlen)
+rrdp_file_resp(size_t id, int ok)
 {
 	enum rrdp_msg type = RRDP_FILE;
-	struct filepath *fp;
 	struct ibuf *b;
-	ssize_t s;
-	char *fn;
-	int fd;
-	int ok = 0;
 
-	/* belt and suspenders */
-	if (!valid_uri(uri, strlen(uri), "rsync://")) {
-		warnx("%s: bad file URI", rp->local);
-		goto done;
-	}
-	/*
-	 * XXX ignore files outside the repo for now.
-	 * Workaround for apnic.
-	 */
-	if (strstr(uri, rp->repouri) != uri) {
-		ok = 1;
-		goto done;
-	}
-
-	if (pt == PUB_UPD || pt == PUB_DEL) {
-		if (filepath_exists(&rp->deleted, uri)) {
-			warnx("%s: already deleted", uri);
-			goto done;
-		}
-		fp = filepath_find(&rp->added, uri);
-		if (fp == NULL) {
-			if ((fn = repo_filename(rp, uri, 0)) == NULL)
-				goto done;
-		} else {
-			filepath_put(&rp->added, fp);
-			if ((fn = repo_filename(rp, uri, 1)) == NULL)
-				goto done;
-		}
-		if (!valid_filehash(fn, hash, hlen)) {
-			warnx("%s: bad message digest", fn);
-			free(fn);
-			goto done;
-		}
-		free(fn);
-	}
-
-	if (pt == PUB_DEL) {
-		filepath_add(&rp->deleted, uri);
-	} else {
-		/* add new file to temp dir */
-		if ((fn = repo_filename(rp, uri, 1)) == NULL)
-			goto done;
-
-		repo_mkpath(fn);
-		fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0644);
-		if (fd == -1) {
-			warn("open %s", fn);
-			free(fn);
-			goto done;
-		}
-
-		if ((s = write(fd, data, dlen)) == -1) {
-			warn("write %s", fn);
-			free(fn);
-			close(fd);
-			goto done;
-		}
-		close(fd);
-		if ((size_t)s != dlen) {
-			warnx("short write %s", fn);
-			free(fn);
-			goto done;
-		}
-		free(fn);
-		filepath_add(&rp->added, uri);
-	}
-
-	/* all OK */
-	ok = 1;
-
-done:
-	/* send back response */
-	if ((b = ibuf_open(sizeof(type) + sizeof(rp->id) + sizeof(ok))) == NULL)
+	if ((b = ibuf_open(sizeof(type) + sizeof(id) + sizeof(ok))) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
-	io_simple_buffer(b, &rp->id, sizeof(rp->id));
+	io_simple_buffer(b, &id, sizeof(id));
 	io_simple_buffer(b, &ok, sizeof(ok));
 	ibuf_close(&rrdpq, b);
 }
 
-/*
- * Initiate a RRDP sync, create the required temporary directory and
- * parse a possible state file before sending the request to the RRDP process.
- */
-static void
-rrdp_fetch(struct repo *rp)
+void
+rrdp_fetch(size_t id, const char *uri, const char *local,
+    struct rrdp_session *s)
 {
 	enum rrdp_msg type = RRDP_START;
-	struct rrdp_session state = { 0 };
 	struct ibuf *b;
-
-	if (!rrdpon)
-		errx(1, "%s: RRDP is off but trying to fetch", rp->local);
-
-	if (asprintf(&rp->temp, "%s.XXXXXXXX", rp->local) == -1)
-		err(1, NULL);
-	if (mkdtemp(rp->temp) == NULL)
-		err(1, "mkdtemp %s", rp->temp);
-
-	rrdp_parse_state(rp, &state);
 
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
-	io_simple_buffer(b, &rp->id, sizeof(rp->id));
-	io_str_buffer(b, rp->local);
-	io_str_buffer(b, rp->uris[rp->uriidx]);
-	io_str_buffer(b, state.session_id);
-	io_simple_buffer(b, &state.serial, sizeof(state.serial));
-	io_str_buffer(b, state.last_mod);
+	io_simple_buffer(b, &id, sizeof(id));
+	io_str_buffer(b, local);
+	io_str_buffer(b, uri);
+	io_str_buffer(b, s->session_id);
+	io_simple_buffer(b, &s->serial, sizeof(s->serial));
+	io_str_buffer(b, s->last_mod);
 	ibuf_close(&rrdpq, b);
-
-	free(state.session_id);
-	free(state.last_mod);
-}
-
-static void
-rrdp_merge_repo(struct repo *rp)
-{
-	struct filepath *fp, *nfp;
-	char *fn, *rfn;
-
-	/* XXX should delay deletes */
-	RB_FOREACH_SAFE(fp, filepath_tree, &rp->deleted, nfp) {
-		if ((fn = repo_filename(rp, fp->file, 0)) != NULL) {
-			if (unlink(fn) == -1)
-				warn("%s: unlink", fn);
-			free(fn);
-		}
-		filepath_put(&rp->deleted, fp);
-	}
-
-	RB_FOREACH_SAFE(fp, filepath_tree, &rp->added, nfp) {
-		if ((fn = repo_filename(rp, fp->file, 1)) != NULL &&
-		    (rfn = repo_filename(rp, fp->file, 0)) != NULL) {
-			repo_mkpath(rfn);
-			if (rename(fn, rfn) == -1)
-				warn("%s: link", rfn);
-			free(rfn);
-		}
-		free(fn);
-		filepath_put(&rp->added, fp);
-	}
-}
-
-static void
-rrdp_clean_temp(struct repo *rp)
-{
-	struct filepath *fp, *nfp;
-	char *fn;
-
-	RB_FOREACH_SAFE(fp, filepath_tree, &rp->deleted, nfp) {
-		filepath_put(&rp->deleted, fp);
-	}
-
-	RB_FOREACH_SAFE(fp, filepath_tree, &rp->added, nfp) {
-		if ((fn = repo_filename(rp, fp->file, 1)) != NULL) {
-			if (unlink(fn) == -1)
-				warn("%s: unlink", fn);
-			free(fn);
-		}
-		filepath_put(&rp->added, fp);
-	}
 }
 
 /*
- * RRDP fetch finalized, either with or without success.
+ * Request a repository sync via rsync URI to directory local.
  */
-static int
-rrdp_done(struct repo *rp, int ok)
+void
+rsync_fetch(size_t id, const char *uri, const char *local)
 {
-	if (ok) {
-		rrdp_merge_repo(rp);
-		logx("%s: loaded from network", rp->local);
-	} else if (rp->uriidx < REPO_MAX_URI - 1 &&
-	    rp->uris[rp->uriidx + 1] != NULL) {
-		rrdp_clean_temp(rp);
-		logx("%s: load from network failed, retry", rp->local);
+	struct ibuf	*b;
 
-		rp->uriidx++;
-		repo_fetch(rp);
-		return 0;
-	} else {
-		rrdp_clean_temp(rp);
-		logx("%s: load from network failed, "
-		    "fallback to cache", rp->local);
-	}
-	return 1;
-}
-
-/*
- * Allocate and insert a new repository.
- */
-static struct repo *
-repo_alloc(void)
-{
-	struct repo *rp;
-
-	if ((rp = calloc(1, sizeof(*rp))) == NULL)
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
-
-	rp->id = ++repoid;
-	RB_INIT(&rp->added);
-	RB_INIT(&rp->deleted);
-	TAILQ_INIT(&rp->queue);
-	SLIST_INSERT_HEAD(&repos, rp, entry);
-
-	return rp;
+	io_simple_buffer(b, &id, sizeof(id));
+	io_str_buffer(b, local);
+	io_str_buffer(b, uri);
+	ibuf_close(&rsyncq, b);
 }
 
-static struct repo *
-repo_find(size_t id)
+/*
+ * Request a file from a https uri, data is written to the file descriptor fd.
+ */
+void
+http_fetch(size_t id, const char *uri, const char *last_mod, int fd)
 {
-	struct repo *rp;
+	struct ibuf	*b;
 
-	SLIST_FOREACH(rp, &repos, entry)
-		if (id == rp->id)
-			break;
-	return rp;
+	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
+		err(1, NULL);
+	io_simple_buffer(b, &id, sizeof(id));
+	io_str_buffer(b, uri);
+	io_str_buffer(b, last_mod);
+	/* pass file as fd */
+	b->fd = fd;
+	ibuf_close(&httpq, b);
 }
 
 /*
@@ -723,229 +260,39 @@ repo_find(size_t id)
  * Create a pipe and pass the pipe endpoints to the http and rrdp process.
  */
 static void
-http_rrdp_fetch(size_t id, const char *uri, const char *last_mod)
+rrdp_http_fetch(size_t id, const char *uri, const char *last_mod)
 {
-	enum rrdp_msg	type = RRDP_HTTP_INI;
-	struct ibuf	*b1, *b2;
+	enum rrdp_msg type = RRDP_HTTP_INI;
+	struct ibuf *b;
 	int pi[2];
 
 	if (pipe2(pi, O_CLOEXEC | O_NONBLOCK) == -1)
 		err(1, "pipe");
 
-	if ((b1 = ibuf_open(sizeof(type) + sizeof(id))) == NULL)
+	if ((b = ibuf_open(sizeof(type) + sizeof(id))) == NULL)
 		err(1, NULL);
-	io_simple_buffer(b1, &type, sizeof(type));
-	io_simple_buffer(b1, &id, sizeof(id));
-	b1->fd = pi[0];
-	ibuf_close(&rrdpq, b1);
+	io_simple_buffer(b, &type, sizeof(type));
+	io_simple_buffer(b, &id, sizeof(id));
+	b->fd = pi[0];
+	ibuf_close(&rrdpq, b);
 
-	if ((b2 = ibuf_dynamic(256, UINT_MAX)) == NULL)
-		err(1, NULL);
-	io_simple_buffer(b2, &id, sizeof(id));
-	io_str_buffer(b2, uri);
-	io_str_buffer(b2, last_mod);
-	/* pass pipe as fd */
-	b2->fd = pi[1];
-	ibuf_close(&httpq, b2);
+	http_fetch(id, uri, last_mod, pi[1]);
 }
 
-/*
- * Request a TA certificate, write it to a temporary file and rename
- * it into place on success.
- */
-static void
-http_ta_fetch(struct repo *rp)
+void
+rrdp_http_done(size_t id, int status, const char *last_mod)
 {
-	struct ibuf	*b;
-	int		 filefd;
-
-	rp->temp = ta_filename(rp, 1);
-	
-	filefd = mkostemp(rp->temp, O_CLOEXEC);
-	if (filefd == -1) {
-		err(1, "mkostemp: %s", rp->temp);
-		/* XXX switch to soft fail and restart with next file */
-	}
-	(void) fchmod(filefd, 0644);
-
-	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
-		err(1, NULL);
-	io_simple_buffer(b, &rp->id, sizeof(rp->id));
-	io_str_buffer(b, rp->uris[rp->uriidx]);
-	/* TODO last modified time */
-	io_str_buffer(b, NULL);
-	/* pass file as fd */
-	b->fd = filefd;
-	ibuf_close(&httpq, b);
-}
-
-/*
- * Handle responses from the http process. For TA file, either rename
- * or delete the temporary file. For RRDP requests relay the request
- * over to the rrdp process.
- */
-static int
-http_done(struct repo *rp, int ok, int status, char *last_mod)
-{
-	struct ibuf	*b;
-	enum rrdp_msg	type = RRDP_HTTP_FIN;
-
-	if (rp->repouri == NULL) {
-		/* Move downloaded TA file into place, or unlink on failure. */
-		if (ok) {
-			char *file;
-
-			file = ta_filename(rp, 0);
-			if (renameat(cachefd, rp->temp, cachefd, file) == -1)
-				warn("rename to %s", file);
-		} else {
-			if (unlinkat(cachefd, rp->temp, 0) == -1)
-				warn("unlink %s", rp->temp);
-		}
-		free(rp->temp);
-		rp->temp = NULL;
-
-		if (ok) {
-			logx("%s: loaded from network", rp->local);
-		} else if (rp->uriidx < REPO_MAX_URI - 1 &&
-		    rp->uris[rp->uriidx + 1] != NULL) {
-			logx("%s: load from network failed, retry", rp->local);
-
-			rp->uriidx++;
-			repo_fetch(rp);
-			return 0;
-		} else {
-			logx("%s: load from network failed, "
-			    "fallback to cache", rp->local);
-		}
-		return 1;
-	}
+	enum rrdp_msg type = RRDP_HTTP_FIN;
+	struct ibuf *b;
 
 	/* RRDP request, relay response over to the rrdp process */
 	if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
-	io_simple_buffer(b, &rp->id, sizeof(rp->id));
+	io_simple_buffer(b, &id, sizeof(id));
 	io_simple_buffer(b, &status, sizeof(status));
 	io_str_buffer(b, last_mod);
 	ibuf_close(&rrdpq, b);
-	return 0;
-}
-
-static void
-repo_fetch(struct repo *rp)
-{
-	struct ibuf	*b;
-
-	if (noop) {
-		rp->loaded = 1;
-		logx("%s: using cache", rp->local);
-		stats.repos++;
-		/* there is nothing in the queue so no need to flush */
-		return;
-	}
-
-	/*
-	 * Create destination location.
-	 * Build up the tree to this point.
-	 */
-
-	if (mkpath(rp->local) == -1)
-		err(1, "%s", rp->local);
-
-	logx("%s: pulling from %s", rp->local, rp->uris[rp->uriidx]);
-
-	if (strncasecmp(rp->uris[rp->uriidx], "rsync://", 8) == 0) {
-		if ((b = ibuf_dynamic(256, UINT_MAX)) == NULL)
-			err(1, NULL);
-		io_simple_buffer(b, &rp->id, sizeof(rp->id));
-		io_str_buffer(b, rp->local);
-		io_str_buffer(b, rp->uris[rp->uriidx]);
-		ibuf_close(&rsyncq, b);
-	} else {
-		/*
-		 * Two cases for https. TA files load directly while
-		 * for RRDP XML files are downloaded and parsed to build
-		 * the repo. TA repos have a NULL repouri.
-		 */
-		if (rp->repouri == NULL) {
-			http_ta_fetch(rp);
-		} else {
-			rrdp_fetch(rp);
-		}
-	}
-}
-
-/*
- * Look up a trust anchor, queueing it for download if not found.
- */
-static struct repo *
-ta_lookup(const struct tal *tal)
-{
-	struct repo	*rp;
-	char		*local;
-	size_t		i, j;
-
-	if (asprintf(&local, "ta/%s", tal->descr) == -1)
-		err(1, NULL);
-
-	/* Look up in repository table. (Lookup should actually fail here) */
-	SLIST_FOREACH(rp, &repos, entry) {
-		if (strcmp(rp->local, local) != 0)
-			continue;
-		free(local);
-		return rp;
-	}
-
-	rp = repo_alloc();
-	rp->local = local;
-	for (i = 0, j = 0; i < tal->urisz && j < 2; i++) {
-		if ((rp->uris[j++] = strdup(tal->uri[i])) == NULL)
-			err(1, NULL);
-	}
-	if (j == 0)
-		errx(1, "TAL %s has no URI", tal->descr);
-
-	repo_fetch(rp);
-	return rp;
-}
-
-/*
- * Look up a repository, queueing it for discovery if not found.
- */
-static struct repo *
-repo_lookup(const char *uri, const char *notify)
-{
-	char		*local, *repo;
-	struct repo	*rp;
-	size_t		 i;
-
-	if ((repo = rsync_base_uri(uri)) == NULL)
-		return NULL;
-
-	/* Look up in repository table. */
-	SLIST_FOREACH(rp, &repos, entry) {
-		if (rp->repouri == NULL ||
-		    strcmp(rp->repouri, repo) != 0)
-			continue;
-		free(repo);
-		return rp;
-	}
-
-	rp = repo_alloc();
-	rp->repouri = repo;
-	local = strchr(repo, ':') + strlen("://");
-	if ((rp->local = strdup(local)) == NULL)
-		err(1, NULL);
-	i = 0;
-	if (rrdpon && notify != NULL)
-		if ((rp->uris[i++] = strdup(notify)) == NULL)
-			err(1, "strdup");
-	if ((rp->uris[i] = strdup(repo)) == NULL)
-		err(1, "strdup");
-
-	repo_fetch(rp);
-	return rp;
 }
 
 /*
@@ -1047,7 +394,7 @@ queue_add_tal(const char *file)
  * Add URIs (CER) from a TAL file, RFC 8630.
  */
 static void
-queue_add_from_tal(const struct tal *tal)
+queue_add_from_tal(struct tal *tal)
 {
 	char		*nfile;
 	struct repo	*repo;
@@ -1056,8 +403,8 @@ queue_add_from_tal(const struct tal *tal)
 
 	/* Look up the repository. */
 	repo = ta_lookup(tal);
+	nfile = repo_filename(repo, NULL);
 
-	nfile = ta_filename(repo, 0);
 	entityq_add(nfile, RTYPE_CER, repo, tal->pkey,
 	    tal->pkeysz, tal->descr);
 }
@@ -1071,13 +418,13 @@ queue_add_from_cert(const struct cert *cert)
 	struct repo	*repo;
 	char		*nfile;
 
-	repo = repo_lookup(cert->repo, cert->notify);
+	repo = repo_lookup(cert->repo, rrdpon ? cert->notify : NULL);
 	if (repo == NULL) {
 		warnx("%s: repository lookup failed", cert->repo);
 		return;
 	}
 
-	nfile = repo_filename(repo, cert->mft, 0);
+	nfile = repo_filename(repo, cert->mft);
 	if (nfile == NULL)
 		return;
 
@@ -1207,89 +554,6 @@ tal_load_default(const char *tals[], size_t max)
 	return (s);
 }
 
-static char **
-add_to_del(char **del, size_t *dsz, char *file)
-{
-	size_t i = *dsz;
-
-	del = reallocarray(del, i + 1, sizeof(*del));
-	if (del == NULL)
-		err(1, NULL);
-	if ((del[i] = strdup(file)) == NULL)
-		err(1, NULL);
-	*dsz = i + 1;
-	return del;
-}
-
-static size_t
-repo_cleanup(void)
-{
-	size_t i, delsz = 0;
-	char *argv[3], **del = NULL;
-	struct repo *rp;
-	FTS *fts;
-	FTSENT *e;
-
-	SLIST_FOREACH(rp, &repos, entry) {
-		argv[0] = rp->local;
-		argv[1] = rp->temp;
-		argv[2] = NULL;
-		if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT,
-		    NULL)) == NULL)
-			err(1, "fts_open");
-		errno = 0;
-		while ((e = fts_read(fts)) != NULL) {
-			switch (e->fts_info) {
-			case FTS_NSOK:
-				if (!filepath_exists(&fpt, e->fts_path))
-					del = add_to_del(del, &delsz,
-					    e->fts_path);
-				break;
-			case FTS_D:
-				break;
-			case FTS_DP:
-				if (rmdir(e->fts_accpath) == -1) {
-					if (errno != ENOTEMPTY)
-						warn("rmdir %s", e->fts_path);
-				} else if (verbose > 1)
-					logx("deleted %s", e->fts_path);
-				break;
-			case FTS_SL:
-			case FTS_SLNONE:
-				warnx("symlink %s", e->fts_path);
-				del = add_to_del(del, &delsz, e->fts_path);
-				break;
-			case FTS_NS:
-			case FTS_ERR:
-				warnx("fts_read %s: %s", e->fts_path,
-				    strerror(e->fts_errno));
-				break;
-			default:
-				warnx("unhandled[%x] %s", e->fts_info,
-				    e->fts_path);
-				break;
-			}
-
-			errno = 0;
-		}
-		if (errno)
-			err(1, "fts_read");
-		if (fts_close(fts) == -1)
-			err(1, "fts_close");
-	}
-
-	for (i = 0; i < delsz; i++) {
-		if (unlink(del[i]) == -1)
-			warn("unlink %s", del[i]);
-		if (verbose > 1)
-			logx("deleted %s", del[i]);
-		free(del[i]);
-	}
-	free(del);
-
-	return delsz;
-}
-
 void
 suicide(int sig __attribute__((unused)))
 {
@@ -1308,7 +572,6 @@ main(int argc, char *argv[])
 	struct pollfd	 pfd[4];
 	struct msgbuf	*queues[4];
 	struct roa	**out = NULL;
-	struct repo	*rp;
 	char		*rsync_prog = "openrsync";
 	char		*bind_addr = NULL;
 	const char	*cachedir = NULL, *outputdir = NULL;
@@ -1620,7 +883,7 @@ main(int argc, char *argv[])
 			if (pfd[i].revents & POLLOUT) {
 				/*
 				 * XXX work around deadlocks because of
-				 * blocking vs non-blocking sockets.
+				 * blocking read vs non-blocking writes.
 				 */
 				if (i > 1)
 					io_socket_nonblocking(pfd[i].fd);
@@ -1645,21 +908,9 @@ main(int argc, char *argv[])
 		if ((pfd[0].revents & POLLIN)) {
 			io_simple_read(rsync, &id, sizeof(id));
 			io_simple_read(rsync, &ok, sizeof(ok));
-
-			rp = repo_find(id);
-			if (rp == NULL)
-				errx(1, "unknown repository id: %zu", id);
-
-			assert(!rp->loaded);
-			if (ok)
-				logx("%s: loaded from network", rp->local);
-			else
-				logx("%s: load from network failed, "
-				    "fallback to cache", rp->local);
-			rp->loaded = 1;
-			stats.repos++;
-			entityq_flush(rp);
+			rsync_finish(id, ok);
 		}
+
 		if ((pfd[2].revents & POLLIN)) {
 			int status;
 			char *last_mod;
@@ -1668,17 +919,7 @@ main(int argc, char *argv[])
 			io_simple_read(http, &ok, sizeof(ok));
 			io_simple_read(http, &status, sizeof(status));
 			io_str_read(http, &last_mod);
-
-			rp = repo_find(id);
-			if (rp == NULL)
-				errx(1, "unknown repository id: %zu", id);
-
-			assert(!rp->loaded);
-			if (http_done(rp, ok, status, last_mod)) {
-				rp->loaded = 1;
-				stats.repos++;
-				entityq_flush(rp);
-			}
+			http_finish(id, ok, status, last_mod);
 			free(last_mod);
 		}
 
@@ -1696,31 +937,22 @@ main(int argc, char *argv[])
 			io_simple_read(rrdp, &type, sizeof(type));
 			io_simple_read(rrdp, &id, sizeof(id));
 
-			rp = repo_find(id);
-			if (rp == NULL)
-				errx(1, "unknown repository id: %zu", id);
-
-			assert(!rp->loaded);
 			switch (type) {
 			case RRDP_END:
 				io_simple_read(rrdp, &ok, sizeof(ok));
-				if (rrdp_done(rp, ok)) {
-					rp->loaded = 1;
-					stats.repos++;
-					entityq_flush(rp);
-				}
+				rrdp_finish(id, ok);
 				break;
 			case RRDP_HTTP_REQ:
 				io_str_read(rrdp, &uri);
 				io_str_read(rrdp, &last_mod);
-				http_rrdp_fetch(id, uri, last_mod);
+				rrdp_http_fetch(id, uri, last_mod);
 				break;
 			case RRDP_SESSION:
 				io_str_read(rrdp, &s.session_id);
 				io_simple_read(rrdp, &s.serial,
 				    sizeof(s.serial));
 				io_str_read(rrdp, &s.last_mod);
-				rrdp_save_state(rp, &s);
+				rrdp_save_state(id, &s);
 				free(s.session_id);
 				free(s.last_mod);
 				break;
@@ -1732,8 +964,9 @@ main(int argc, char *argv[])
 				io_str_read(rrdp, &uri);
 				io_buf_read_alloc(rrdp, (void **)&data, &dsz);
 
-				rrdp_handle_file(rp, pt, uri,
+				ok = rrdp_handle_file(id, pt, uri,
 				    hash, sizeof(hash), data, dsz);
+				rrdp_file_resp(id, ok);
 
 				free(uri);
 				free(data);
@@ -1840,15 +1073,7 @@ main(int argc, char *argv[])
 	logx("VRP Entries: %zu (%zu unique)", stats.vrps, stats.uniqs);
 
 	/* Memory cleanup. */
-	while ((rp = SLIST_FIRST(&repos)) != NULL) {
-		SLIST_REMOVE_HEAD(&repos, entry);
-		free(rp->repouri);
-		free(rp->local);
-		free(rp->temp);
-		free(rp->uris[0]);
-		free(rp->uris[1]);
-		free(rp);
-	}
+	repo_free();
 
 	for (i = 0; i < outsz; i++)
 		roa_free(out[i]);
