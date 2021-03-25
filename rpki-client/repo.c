@@ -415,10 +415,12 @@ rsync_get(const char *uri)
 
 	if (noop) {
 		rr->loaded = 1;
-		logx("%s: using cache", rr->repouri);
+		logx("%s: using cache", rr->basedir);
 		/* there is nothing in the queue so no need to flush */
-	} else
+	} else {
+		logx("%s: pulling from %s", rr->basedir, rr->repouri);
 		rsync_fetch(rr->id, rr->repouri, rr->basedir);
+	}
 
 	return rr;
 }
@@ -475,8 +477,10 @@ rrdp_get(const char *uri)
 		rr->loaded = 1;
 		logx("%s: using cache", rr->notifyuri);
 		/* there is nothing in the queue so no need to flush */
-	} else
+	} else {
+		logx("%s: pulling from %s", rr->notifyuri, "network");
 		rrdprepo_fetch(rr);
+	}
 
 	return rr;
 }
@@ -824,15 +828,20 @@ rsync_finish(size_t id, int ok)
 
 	tr = ta_find(id);
 	if (tr != NULL) {
-		tr->loaded = 1;
 		if (ok) {
 			logx("ta/%s: loaded from network", tr->descr);
 			stats.rsync_repos++;
+		} else if (++tr->uriidx < tr->urisz) {
+			logx("ta/%s: load from network failed, retry",
+			    tr->descr);
+			ta_fetch(tr);
+			return;
 		} else {
 			logx("ta/%s: load from network failed, "
 			    "fallback to cache", tr->descr);
 			stats.rsync_fails++;
 		}
+		tr->loaded = 1;
 		SLIST_FOREACH(rp, &repos, entry)
 			if (rp->ta == tr) {
 				rp->loaded = 1;
@@ -848,23 +857,19 @@ rsync_finish(size_t id, int ok)
 
 	rr->loaded = 1;
 	if (ok) {
-		logx("%s: loaded from network", rr->repouri);
+		logx("%s: loaded from network", rr->basedir);
 		stats.rsync_repos++;
-		SLIST_FOREACH(rp, &repos, entry)
-			if (rp->rsync == rr) {
-				rp->loaded = 1;
-				entityq_flush(&rp->queue);
-			}
 	} else {
-		stats.rsync_fails++;
 		logx("%s: load from network failed, fallback to cache",
-		    rr->repouri);
-		SLIST_FOREACH(rp, &repos, entry)
-			if (rp->rsync == rr) {
-				rp->loaded = 1;
-				entityq_flush(&rp->queue);
-			}
+		    rr->basedir);
+		stats.rsync_fails++;
 	}
+
+	SLIST_FOREACH(rp, &repos, entry)
+		if (rp->rsync == rr) {
+			rp->loaded = 1;
+			entityq_flush(&rp->queue);
+		}
 }
 
 /*
@@ -946,6 +951,7 @@ http_finish(size_t id, enum http_result res, const char *last_mod)
 		if (++tr->uriidx < tr->urisz) {
 			logx("ta/%s: load from network failed, retry",
 			    tr->descr);
+			ta_fetch(tr);
 		} else {
 			logx("ta/%s: load from network failed, "
 			    "fallback to cache", tr->descr);
