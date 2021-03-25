@@ -1,4 +1,4 @@
-/*	$OpenBSD: tal.c,v 1.28 2021/03/05 17:15:19 claudio Exp $ */
+/*	$OpenBSD: tal.c,v 1.29 2021/03/25 09:27:38 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -148,7 +148,7 @@ tal_parse_buffer(const char *fn, char *buf)
 	/* sort uri lexicographically so https:// is preferred */
 	qsort(tal->uri, tal->urisz, sizeof(tal->uri[0]), tal_cmp);
 
-	/* Now the BASE64-encoded public key. */
+	/* Now the Base64-encoded public key. */
 	if ((base64_decode(buf, &der, &dersz)) == -1) {
 		warnx("%s: RFC 7730 section 2.1: subjectPublicKeyInfo: "
 		    "bad public key", fn);

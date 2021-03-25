@@ -58,9 +58,9 @@ struct rrdp {
 	struct pollfd		*pfd;
 	int			 infd;
 	int			 state;
-	int			 status;
 	unsigned int		 file_pending;
 	unsigned int		 file_failed;
+	enum http_result	 res;
 	enum rrdp_task		 task;
 
 	char			 hash[SHA256_DIGEST_LENGTH];
@@ -298,7 +298,7 @@ rrdp_finished(struct rrdp *s)
 		return;
 	}
 
-	if (s->status == 200) {
+	if (s->res == HTTP_OK) {
 		/*
 		 * Finalize parsing on success to be sure that
 		 * all of the XML is correct. Needs to be done here
@@ -366,14 +366,13 @@ rrdp_finished(struct rrdp *s)
 			}
 			break;
 		}
-	} else if (s->status == 304 && s->task == NOTIFICATION) {
+	} else if (s->res == HTTP_NOT_MOD && s->task == NOTIFICATION) {
 		warnx("%s: notification file not modified", s->local);
 		/* no need to update state file */
 		rrdp_free(s);
 		rrdp_done(id, 1);
 	} else {
-		warnx("%s: failed with HTTP status %d", s->local,
-		    s->status);
+		warnx("%s: HTTP request failed", s->local);
 		rrdp_failed(s);
 	}
 }
@@ -384,9 +383,10 @@ rrdp_input_handler(int fd)
 	char *local, *notify, *session_id, *last_mod;
 	struct rrdp *s;
 	enum rrdp_msg type;
+	enum http_result res;
 	long long serial;
 	size_t id;
-	int infd, status;
+	int infd, ok;
 
 	infd = io_recvfd(fd, &type, sizeof(type));
 	io_simple_read(fd, &id, sizeof(id));
@@ -416,7 +416,7 @@ rrdp_input_handler(int fd)
 		s->state = RRDP_STATE_PARSE;
 		break;
 	case RRDP_HTTP_FIN:
-		io_simple_read(fd, &status, sizeof(status));
+		io_simple_read(fd, &res, sizeof(res));
 		io_str_read(fd, &last_mod);
 		if (infd != -1)
 			errx(1, "received unexpected fd");
@@ -427,7 +427,7 @@ rrdp_input_handler(int fd)
 		if (!(s->state & RRDP_STATE_PARSE))
 			errx(1, "%s: bad internal state", s->local);
 
-		s->status = status;
+		s->res = res;
 		s->last_mod = last_mod;
 		s->state |= RRDP_STATE_HTTP_DONE;
 		rrdp_finished(s);
@@ -438,8 +438,8 @@ rrdp_input_handler(int fd)
 			errx(1, "rrdp session %zu does not exist", id);
 		if (infd != -1)
 			errx(1, "received unexpected fd %d", infd);
-		io_simple_read(fd, &status, sizeof(status));
-		if (status == 0)
+		io_simple_read(fd, &ok, sizeof(ok));
+		if (ok == 0)
 			s->file_failed++;
 		s->file_pending--;
 		if (s->file_pending == 0)

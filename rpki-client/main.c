@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.122 2021/03/19 13:56:10 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.123 2021/03/25 12:18:45 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -280,7 +280,7 @@ rrdp_http_fetch(size_t id, const char *uri, const char *last_mod)
 }
 
 void
-rrdp_http_done(size_t id, int status, const char *last_mod)
+rrdp_http_done(size_t id, enum http_result res, const char *last_mod)
 {
 	enum rrdp_msg type = RRDP_HTTP_FIN;
 	struct ibuf *b;
@@ -290,7 +290,7 @@ rrdp_http_done(size_t id, int status, const char *last_mod)
 		err(1, NULL);
 	io_simple_buffer(b, &type, sizeof(type));
 	io_simple_buffer(b, &id, sizeof(id));
-	io_simple_buffer(b, &status, sizeof(status));
+	io_simple_buffer(b, &res, sizeof(res));
 	io_str_buffer(b, last_mod);
 	ibuf_close(&rrdpq, b);
 }
@@ -914,14 +914,13 @@ main(int argc, char *argv[])
 		}
 
 		if ((pfd[2].revents & POLLIN)) {
-			int status;
+			enum http_result res;
 			char *last_mod;
 
 			io_simple_read(http, &id, sizeof(id));
-			io_simple_read(http, &ok, sizeof(ok));
-			io_simple_read(http, &status, sizeof(status));
+			io_simple_read(http, &res, sizeof(res));
 			io_str_read(http, &last_mod);
-			http_finish(id, ok, status, last_mod);
+			http_finish(id, res, last_mod);
 			free(last_mod);
 		}
 

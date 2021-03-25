@@ -1,4 +1,4 @@
-/*	$OpenBSD: extern.h,v 1.55 2021/03/19 13:56:10 claudio Exp $ */
+/*	$OpenBSD: extern.h,v 1.56 2021/03/25 12:18:45 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -264,6 +264,12 @@ enum rtype {
 	RTYPE_GBR,
 };
 
+enum http_result {
+	HTTP_FAILED,	/* anything else */
+	HTTP_OK,	/* 200 OK */
+	HTTP_NOT_MOD,	/* 304 Not Modified */
+};
+
 /*
  * Message types for communication with RRDP process.
  */
@@ -463,14 +469,14 @@ size_t		 repo_cleanup(void);
 void		 repo_free(void);
 
 void		 rsync_finish(size_t, int);
-void		 http_finish(size_t, int, int, const char *);
+void		 http_finish(size_t, enum http_result, const char *);
 void		 rrdp_finish(size_t, int);
 
 void		 rsync_fetch(size_t, const char *, const char *);
 void		 http_fetch(size_t, const char *, const char *, int);
 void		 rrdp_fetch(size_t, const char *, const char *,
 		    struct rrdp_session *);
-void		 rrdp_http_done(size_t, int, const char *);
+void		 rrdp_http_done(size_t, enum http_result, const char *);
 
 
 /* Logging (though really used for OpenSSL errors). */

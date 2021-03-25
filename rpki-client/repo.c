@@ -910,7 +910,7 @@ rrdp_finish(size_t id, int ok)
  * over to the rrdp process.
  */
 void
-http_finish(size_t id, int ok, int status, const char *last_mod)
+http_finish(size_t id, enum http_result res, const char *last_mod)
 {
 	struct tarepo *tr;
 	struct repo *rp;
@@ -918,12 +918,12 @@ http_finish(size_t id, int ok, int status, const char *last_mod)
 	tr = ta_find(id);
 	if (tr == NULL) {
 		/* not a TA fetch therefor RRDP */
-		rrdp_http_done(id, status, last_mod);
+		rrdp_http_done(id, res, last_mod);
 		return;
 	}
 
 	/* Move downloaded TA file into place, or unlink on failure. */
-	if (ok) {
+	if (res == HTTP_OK) {
 		char *file;
 
 		file = ta_filename(tr, 0);
