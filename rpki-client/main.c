@@ -1039,7 +1039,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	stats.del_files = repo_cleanup();
+	stats.del_files = repo_cleanup(&fpt);
 
 	gettimeofday(&now_time, NULL);
 	timersub(&now_time, &start_time, &stats.elapsed_time);

@@ -1064,7 +1064,6 @@ repo_queued(struct repo *rp, struct entity *p)
 	return 1;
 }
 
-#if 0
 static char **
 add_to_del(char **del, size_t *dsz, char *file)
 {
@@ -1078,23 +1077,20 @@ add_to_del(char **del, size_t *dsz, char *file)
 	*dsz = i + 1;
 	return del;
 }
-#endif
 
 size_t
-repo_cleanup(void)
+repo_cleanup(struct filepath_tree *fpt)
 {
 	size_t i, delsz = 0;
 	char **del = NULL;
-#if 0
 	char *argv[3];
-	struct repo *rp;
+	struct rsyncrepo *rr;
 	FTS *fts;
 	FTSENT *e;
 
-	SLIST_FOREACH(rp, &repos, entry) {
-		argv[0] = rp->local;
-		argv[1] = rp->temp;
-		argv[2] = NULL;
+	SLIST_FOREACH(rr, &rsyncrepos, entry) {
+		argv[0] = rr->basedir;
+		argv[1] = NULL;
 		if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT,
 		    NULL)) == NULL)
 			err(1, "fts_open");
@@ -1102,14 +1098,16 @@ repo_cleanup(void)
 		while ((e = fts_read(fts)) != NULL) {
 			switch (e->fts_info) {
 			case FTS_NSOK:
-				if (!filepath_exists(&fpt, e->fts_path))
+				if (!filepath_exists(fpt, e->fts_path))
 					del = add_to_del(del, &delsz,
 					    e->fts_path);
 				break;
 			case FTS_D:
 				break;
 			case FTS_DP:
-				if (rmdir(e->fts_accpath) == -1) {
+				if (strcmp(e->fts_path, rr->basedir) == 0)
+					break;
+				else if (rmdir(e->fts_accpath) == -1) {
 					if (errno != ENOTEMPTY)
 						warn("rmdir %s", e->fts_path);
 				} else if (verbose > 1)
@@ -1138,7 +1136,6 @@ repo_cleanup(void)
 		if (fts_close(fts) == -1)
 			err(1, "fts_close");
 	}
-#endif
 
 	for (i = 0; i < delsz; i++) {
 		if (unlink(del[i]) == -1)

@@ -465,7 +465,7 @@ char		*repo_filename(const struct repo *, const char *);
 struct repo	*ta_lookup(struct tal *);
 struct repo	*repo_lookup(const char *, const char *);
 int		 repo_queued(struct repo *, struct entity *);
-size_t		 repo_cleanup(void);
+size_t		 repo_cleanup(struct filepath_tree *);
 void		 repo_free(void);
 
 void		 rsync_finish(size_t, int);
