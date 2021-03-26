@@ -347,6 +347,7 @@ struct	stats {
 	size_t	 vrps; /* total number of vrps */
 	size_t	 uniqs; /* number of unique vrps */
 	size_t	 del_files; /* number of files removed in cleanup */
+	size_t	 del_dirs; /* number of directories removed in cleanup */
 	char	*talnames;
 	struct timeval	elapsed_time;
 	struct timeval	user_time;
@@ -465,7 +466,7 @@ char		*repo_filename(const struct repo *, const char *);
 struct repo	*ta_lookup(struct tal *);
 struct repo	*repo_lookup(const char *, const char *);
 int		 repo_queued(struct repo *, struct entity *);
-size_t		 repo_cleanup(struct filepath_tree *);
+void		 repo_cleanup(struct filepath_tree *);
 void		 repo_free(void);
 
 void		 rsync_finish(size_t, int);

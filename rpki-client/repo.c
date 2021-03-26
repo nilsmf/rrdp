@@ -105,7 +105,7 @@ struct filepath {
 static inline int
 filepathcmp(struct filepath *a, struct filepath *b)
 {
-	return strcasecmp(a->file, b->file);
+	return strcmp(a->file, b->file);
 }
 
 RB_PROTOTYPE(filepath_tree, filepath, entry, filepathcmp);
@@ -152,6 +152,21 @@ static int
 filepath_exists(struct filepath_tree *tree, char *file)
 {
 	return filepath_find(tree, file) != NULL;
+}
+
+static int
+filepath_dir_exists(struct filepath_tree *tree, char *path)
+{
+	struct filepath needle;
+	struct filepath *res;
+
+	needle.file = path;
+
+	res = RB_NFIND(filepath_tree, tree, &needle);
+	if (res != NULL && strstr(res->file, path) == res->file)
+			return 1;
+
+	return 0;
 }
 
 /*
@@ -250,7 +265,7 @@ ta_filename(const struct tarepo *tr, int temp)
 	file = strrchr(tr->uri[0], '/');
 	assert(file);
 
-	if (asprintf(&nfile, "ta/%s%s%s", tr->descr, file,
+	if (asprintf(&nfile, "%s%s%s", tr->basedir, file,
 	    temp ? ".XXXXXXXX": "") == -1)
 		err(1, NULL);
 
@@ -310,12 +325,9 @@ ta_fetch(struct tarepo *tr)
 		 * Create destination location.
 		 * Build up the tree to this point.
 		 */
-		if (mkpath(tr->basedir) == -1)
-			err(1, "%s", tr->basedir);
 		rsync_fetch(tr->id, tr->uri[tr->uriidx], tr->basedir);
 	} else {
 		tr->temp = ta_filename(tr, 1);
-		repo_mkpath(tr->temp);
 		fd = mkostemp(tr->temp, O_CLOEXEC);
 		if (fd == -1) {
 			err(1, "mkostemp: %s", tr->temp);
@@ -352,6 +364,10 @@ ta_get(struct tal *tal)
 	tr->uri = tal->uri;
 	tal->urisz = 0;
 	tal->uri = NULL;
+
+	/* create base directory */
+	if (mkpath(tr->basedir) == -1)
+		err(1, "%s", tr->basedir);
 
 	if (noop) {
 		tr->loaded = 1;
@@ -413,6 +429,10 @@ rsync_get(const char *uri)
 	rr->repouri = repo;
 	rr->basedir = rsync_dir(repo, "rsync");
 
+	/* create base directory */
+	if (mkpath(rr->basedir) == -1)
+		err(1, "%s", rr->basedir);
+
 	if (noop) {
 		rr->loaded = 1;
 		logx("%s: using cache", rr->basedir);
@@ -473,6 +493,10 @@ rrdp_get(const char *uri)
 	RB_INIT(&rr->added);
 	RB_INIT(&rr->deleted);
 
+	/* create base directory */
+	if (mkpath(rr->basedir) == -1)
+		err(1, "%s", rr->basedir);
+
 	if (noop) {
 		rr->loaded = 1;
 		logx("%s: using cache", rr->notifyuri);
@@ -513,6 +537,18 @@ rrdp_free(void)
 	
 		free(rr);
 	}
+}
+
+static int
+rrdp_basedir(const char *dir)
+{
+	struct rrdprepo *rr;
+
+	SLIST_FOREACH(rr, &rrdprepos, entry)
+		if (strcmp(dir, rr->basedir) == 0)
+			return 1;
+
+	return 0;
 }
 
 /*
@@ -632,7 +668,6 @@ rrdp_save_state(size_t id, struct rrdp_session *state)
 	file = rrdp_state_filename(rr, 0);
 	temp = rrdp_state_filename(rr, 1);
 
-	repo_mkpath(temp);
 	if ((fd = mkostemp(temp, O_CLOEXEC)) == -1)
 		err(1, "%s: mkostemp: %s", rr->basedir, temp);
 	(void) fchmod(fd, 0644);
@@ -753,9 +788,6 @@ static void
 rrdprepo_fetch(struct rrdprepo *rr)
 {
 	struct rrdp_session state = { 0 };
-
-	if (mkpath(rr->basedir) == -1)
-		err(1, "%s", rr->basedir);
 
 	if (asprintf(&rr->temp, "%s.XXXXXXXX", rr->basedir) == -1)
 		err(1, NULL);
@@ -1038,10 +1070,9 @@ repo_filename(const struct repo *rp, const char *uri)
 	if (rp->rrdp)
 		return rrdp_filename(rp->rrdp, uri, 0);
 
-	if (rp->rsync) {
-		dir = rp->rsync->basedir;
-		repouri = rp->rsync->repouri;
-	}
+	/* must be rsync */
+	dir = rp->rsync->basedir;
+	repouri = rp->rsync->repouri;
 
 	if (strstr(uri, repouri) != uri) {
 		warnx("%s: URI %s outside of repository", repouri, uri);
@@ -1078,64 +1109,66 @@ add_to_del(char **del, size_t *dsz, char *file)
 	return del;
 }
 
-size_t
+void
 repo_cleanup(struct filepath_tree *fpt)
 {
-	size_t i, delsz = 0;
-	char **del = NULL;
-	char *argv[3];
-	struct rsyncrepo *rr;
+	size_t i, delsz = 0, dirsz = 0;
+	char **del = NULL, **dir = NULL;
+	char *argv[4];
 	FTS *fts;
 	FTSENT *e;
 
-	SLIST_FOREACH(rr, &rsyncrepos, entry) {
-		argv[0] = rr->basedir;
-		argv[1] = NULL;
-		if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT,
-		    NULL)) == NULL)
-			err(1, "fts_open");
-		errno = 0;
-		while ((e = fts_read(fts)) != NULL) {
-			switch (e->fts_info) {
-			case FTS_NSOK:
-				if (!filepath_exists(fpt, e->fts_path))
-					del = add_to_del(del, &delsz,
-					    e->fts_path);
-				break;
-			case FTS_D:
-				break;
-			case FTS_DP:
-				if (strcmp(e->fts_path, rr->basedir) == 0)
-					break;
-				else if (rmdir(e->fts_accpath) == -1) {
-					if (errno != ENOTEMPTY)
-						warn("rmdir %s", e->fts_path);
-				} else if (verbose > 1)
-					logx("deleted %s", e->fts_path);
-				break;
-			case FTS_SL:
-			case FTS_SLNONE:
-				warnx("symlink %s", e->fts_path);
-				del = add_to_del(del, &delsz, e->fts_path);
-				break;
-			case FTS_NS:
-			case FTS_ERR:
-				warnx("fts_read %s: %s", e->fts_path,
-				    strerror(e->fts_errno));
-				break;
-			default:
-				warnx("unhandled[%x] %s", e->fts_info,
+	argv[0] = "ta";
+	argv[1] = "rsync";
+	argv[2] = "rrdp";
+	argv[3] = NULL;
+	if ((fts = fts_open(argv, FTS_PHYSICAL | FTS_NOSTAT, NULL)) == NULL)
+		err(1, "fts_open");
+	errno = 0;
+	while ((e = fts_read(fts)) != NULL) {
+		switch (e->fts_info) {
+		case FTS_NSOK:
+			if (!filepath_exists(fpt, e->fts_path))
+				del = add_to_del(del, &delsz,
 				    e->fts_path);
-				break;
-			}
-
-			errno = 0;
+			break;
+		case FTS_D:
+			/* skip rrdp base directories during cleanup */
+			if (rrdp_basedir(e->fts_path))
+				if (fts_set(fts, e, FTS_SKIP) == -1)
+					err(1, "fts_set");
+			break;
+		case FTS_DP:
+			if (!filepath_dir_exists(fpt, e->fts_path))
+				dir = add_to_del(dir, &dirsz,
+				    e->fts_path);
+			break;
+		case FTS_SL:
+		case FTS_SLNONE:
+			warnx("symlink %s", e->fts_path);
+			del = add_to_del(del, &delsz, e->fts_path);
+		break;
+		case FTS_NS:
+		case FTS_ERR:
+			if (e->fts_errno == ENOENT &&
+			    (strcmp(e->fts_path, "rsync") == 0 ||
+			    strcmp(e->fts_path, "rrdp") == 0))
+				continue;
+			warnx("fts_read %s: %s", e->fts_path,
+			    strerror(e->fts_errno));
+			break;
+		default:
+			warnx("unhandled[%x] %s", e->fts_info,
+			    e->fts_path);
+			break;
 		}
-		if (errno)
-			err(1, "fts_read");
-		if (fts_close(fts) == -1)
-			err(1, "fts_close");
+
+		errno = 0;
 	}
+	if (errno)
+		err(1, "fts_read");
+	if (fts_close(fts) == -1)
+		err(1, "fts_close");
 
 	for (i = 0; i < delsz; i++) {
 		if (unlink(del[i]) == -1)
@@ -1145,8 +1178,17 @@ repo_cleanup(struct filepath_tree *fpt)
 		free(del[i]);
 	}
 	free(del);
+	stats.del_files = delsz;
 
-	return delsz;
+	for (i = 0; i < dirsz; i++) {
+		if (rmdir(dir[i]) == -1)
+			warn("rmdir %s", dir[i]);
+		if (verbose > 1)
+			logx("deleted dir %s", dir[i]);
+		free(dir[i]);
+	}
+	free(dir);
+	stats.del_dirs = dirsz;
 }
 
 void

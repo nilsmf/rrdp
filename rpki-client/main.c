@@ -1039,7 +1039,8 @@ main(int argc, char *argv[])
 		}
 	}
 
-	stats.del_files = repo_cleanup(&fpt);
+	if (!noop)
+		repo_cleanup(&fpt);
 
 	gettimeofday(&now_time, NULL);
 	timersub(&now_time, &start_time, &stats.elapsed_time);
@@ -1070,7 +1071,8 @@ main(int argc, char *argv[])
 	logx("Certificate revocation lists: %zu", stats.crls);
 	logx("Ghostbuster records: %zu", stats.gbrs);
 	logx("Repositories: %zu", stats.repos);
-	logx("Files removed: %zu", stats.del_files);
+	logx("Removed: %zu files, %zu directories",
+	    stats.del_files, stats.del_dirs);
 	logx("VRP Entries: %zu (%zu unique)", stats.vrps, stats.uniqs);
 
 	/* Memory cleanup. */
