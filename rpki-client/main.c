@@ -1084,7 +1084,7 @@ main(int argc, char *argv[])
 
 usage:
 	fprintf(stderr,
-	    "usage: rpki-client [-BcjnoVv] [-b sourceaddr] [-d cachedir]"
+	    "usage: rpki-client [-BcjnoRVv] [-b sourceaddr] [-d cachedir]"
 	    " [-e rsync_prog]\n"
 	    "                   [-s timeout] [-T table] [-t tal]"
 	    " [outputdir]\n");
