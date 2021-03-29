@@ -1,7 +1,7 @@
 /*      $OpenBSD$ */
 /*
  * Copyright (c) 2020 Nils Fisher <nils_fisher@hotmail.com>
- * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.com>
+ * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
