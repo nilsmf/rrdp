@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.123 2021/03/25 12:18:45 claudio Exp $ */
+/*	$OpenBSD: main.c,v 1.126 2021/03/29 03:45:35 deraadt Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -551,7 +551,7 @@ tal_load_default(const char *tals[], size_t max)
 		tals[s++] = path;
 	}
 	closedir (dirp);
-	return (s);
+	return s;
 }
 
 void
@@ -561,6 +561,8 @@ suicide(int sig __attribute__((unused)))
 
 }
 
+#define NPFD	4
+
 int
 main(int argc, char *argv[])
 {
@@ -569,8 +571,8 @@ main(int argc, char *argv[])
 	size_t		 i, id, outsz = 0, talsz = 0;
 	pid_t		 procpid, rsyncpid, httppid, rrdppid;
 	int		 fd[2];
-	struct pollfd	 pfd[4];
-	struct msgbuf	*queues[4];
+	struct pollfd	 pfd[NPFD];
+	struct msgbuf	*queues[NPFD];
 	struct roa	**out = NULL;
 	char		*rsync_prog = "openrsync";
 	char		*bind_addr = NULL;
@@ -593,7 +595,6 @@ main(int argc, char *argv[])
 		    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) == -1 ||
 		    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid) == -1)
 			err(1, "unable to revoke privs");
-
 	}
 	cachedir = RPKI_PATH_BASE_DIR;
 	outputdir = RPKI_PATH_OUT_DIR;
@@ -865,19 +866,19 @@ main(int argc, char *argv[])
 		err(1, "fchdir");
 
 	while (entity_queue > 0 && !killme) {
-		for (i = 0; i < 4; i++) {
+		for (i = 0; i < NPFD; i++) {
 			pfd[i].events = POLLIN;
 			if (queues[i]->queued)
 				pfd[i].events |= POLLOUT;
 		}
 
-		if ((c = poll(pfd, 4, INFTIM)) == -1) {
+		if ((c = poll(pfd, NPFD, INFTIM)) == -1) {
 			if (errno == EINTR)
 				continue;
 			err(1, "poll");
 		}
 
-		for (i = 0; i < 4; i++) {
+		for (i = 0; i < NPFD; i++) {
 			if (pfd[i].revents & (POLLERR|POLLNVAL))
 				errx(1, "poll[%zu]: bad fd", i);
 			if (pfd[i].revents & POLLHUP)
@@ -891,14 +892,16 @@ main(int argc, char *argv[])
 					io_socket_nonblocking(pfd[i].fd);
 				switch (msgbuf_write(queues[i])) {
 				case 0:
-					errx(1, "write: connection closed");
+					errx(1, "write[%zu]: "
+					    "connection closed", i);
 				case -1:
-					err(1, "write");
+					err(1, "write[%zu]", i);
 				}
 				if (i > 1)
 					io_socket_blocking(pfd[i].fd);
 			}
 		}
+
 
 		/*
 		 * Check the rsync and http process.

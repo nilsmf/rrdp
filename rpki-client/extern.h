@@ -1,4 +1,4 @@
-/*	$OpenBSD: extern.h,v 1.56 2021/03/25 12:18:45 claudio Exp $ */
+/*	$OpenBSD: extern.h,v 1.58 2021/03/29 06:50:44 tb Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -156,6 +156,7 @@ struct mft {
 	struct mftfile	*files; /* file and hash */
 	size_t		 filesz; /* number of filenames */
 	int		 stale; /* if a stale manifest */
+	char		*seqnum; /* manifestNumber */
 	char		*aia; /* AIA */
 	char		*aki; /* AKI */
 	char		*ski; /* SKI */
@@ -505,8 +506,6 @@ int		 io_recvfd(int, void *, size_t);
 char		*x509_get_aia(X509 *, const char *);
 char		*x509_get_aki(X509 *, int, const char *);
 char		*x509_get_ski(X509 *, const char *);
-int		 x509_get_extensions(X509 *, const char *, char **, char **,
-			char **);
 char		*x509_get_crl(X509 *, const char *);
 char		*x509_crl_get_aki(X509_CRL *, const char *);
 

@@ -333,7 +333,8 @@ ta_fetch(struct tarepo *tr)
 			err(1, "mkostemp: %s", tr->temp);
 			/* XXX switch to soft fail and restart with next file */
 		}
-		(void) fchmod(fd, 0644);
+		if (fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) == -1)
+			warn("fchmod: %s", tr->temp);
 
 		http_fetch(tr->id, tr->uri[tr->uriidx], NULL, fd);
 	}
