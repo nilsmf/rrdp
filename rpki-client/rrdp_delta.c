@@ -131,7 +131,7 @@ start_publish_withdraw_elem(struct delta_xml *dxml, const char **attr,
 			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
-			if (hex_to_bin(attr[i + 1], hash, sizeof(hash)) == 0)
+			if (hex_decode(attr[i + 1], hash, sizeof(hash)) == 0)
 				continue;
 		}
 		PARSE_FAIL(p, "parse failed - non conforming "

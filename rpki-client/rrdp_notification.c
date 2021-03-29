@@ -177,7 +177,7 @@ start_snapshot_elem(struct notification_xml *nxml, const char **attr)
 			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
-			if (hex_to_bin(attr[i + 1], nxml->snapshot_hash,
+			if (hex_decode(attr[i + 1], nxml->snapshot_hash,
 			    sizeof(nxml->snapshot_hash)) == 0)
 				continue;
 		}
@@ -222,7 +222,7 @@ start_delta_elem(struct notification_xml *nxml, const char **attr)
 			}
 		}
 		if (strcmp("hash", attr[i]) == 0 && hasHash++ == 0) {
-			if (hex_to_bin(attr[i + 1], delta_hash,
+			if (hex_decode(attr[i + 1], delta_hash,
 			    sizeof(delta_hash)) == 0)
 				continue;
 		}

@@ -93,8 +93,12 @@ xstrdup(const char *s)
 	return r;
 }
 
+/*
+ * Hex decode hexstring into the supplied buffer.
+ * Return 0 on success else -1, if buffer too small or bad encoding.
+ */
 int
-hex_to_bin(const char *hexstr, char *buf, size_t len)
+hex_decode(const char *hexstr, char *buf, size_t len)
 {
 	unsigned char ch, r;
 	size_t pos = 0;

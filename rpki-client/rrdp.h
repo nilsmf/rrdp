@@ -20,7 +20,7 @@ enum rrdp_task {
 
 /* rrdp generic */
 char 	*xstrdup(const char *);
-int	 hex_to_bin(const char *, char *, size_t);
+int	 hex_decode(const char *, char *, size_t);
 
 /* publish or withdraw element */
 struct rrdp;
