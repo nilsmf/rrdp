@@ -59,7 +59,7 @@ const char	*bird_tablename = "ROAS";
 
 int	verbose;
 int	noop;
-int	rrdpon = 1;
+int	rrdpon;
 
 struct stats	 stats;
 
@@ -603,7 +603,7 @@ main(int argc, char *argv[])
 	    "proc exec unveil", NULL) == -1)
 		err(1, "pledge");
 
-	while ((c = getopt(argc, argv, "b:Bcd:e:jnoRs:t:T:vV")) != -1)
+	while ((c = getopt(argc, argv, "b:Bcd:e:jnorRs:t:T:vV")) != -1)
 		switch (c) {
 		case 'b':
 			bind_addr = optarg;
@@ -631,6 +631,9 @@ main(int argc, char *argv[])
 			break;
 		case 'R':
 			rrdpon = 0;
+			break;
+		case 'r':
+			rrdpon = 1;
 			break;
 		case 's':
 			timeout = strtonum(optarg, 0, 24*60*60, &errs);
@@ -1089,7 +1092,7 @@ main(int argc, char *argv[])
 
 usage:
 	fprintf(stderr,
-	    "usage: rpki-client [-BcjnoRVv] [-b sourceaddr] [-d cachedir]"
+	    "usage: rpki-client [-BcjnorRVv] [-b sourceaddr] [-d cachedir]"
 	    " [-e rsync_prog]\n"
 	    "                   [-s timeout] [-T table] [-t tal]"
 	    " [outputdir]\n");
