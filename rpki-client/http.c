@@ -1198,8 +1198,8 @@ proc_http(char *bind_addr, int fd)
 
 			h = http_new(id, uri, mod, outfd);
 			if (h == NULL) {
+				/* response sent in http_new -> http_free */
 				close(outfd);
-				http_fail(id);
 			} else
 				for (i = 0; i < MAX_CONNECTIONS; i++) {
 					if (http_conns[i] != NULL)
