@@ -445,7 +445,7 @@ int		 as_check_covered(uint32_t, uint32_t,
 /* Parser-specific */
 void		 entity_free(struct entity *);
 void		 entity_read_req(int fd, struct entity *);
-void		 entityq_flush(struct entityq *);
+void		 entityq_flush(struct entityq *, struct repo *);
 void		 proc_parser(int) __attribute__((noreturn));
 
 /* Rsync-specific. */

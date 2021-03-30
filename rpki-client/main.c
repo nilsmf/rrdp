@@ -118,6 +118,11 @@ entity_write_req(const struct entity *ent)
 {
 	struct ibuf *b;
 
+	if (filepath_add(&fpt, ent->file) == 0) {
+		warnx("%s: File already visited", ent->file);
+		return;
+	}
+
 	if ((b = ibuf_dynamic(sizeof(*ent), UINT_MAX)) == NULL)
 		err(1, NULL);
 	io_simple_buffer(b, &ent->type, sizeof(ent->type));
@@ -134,11 +139,23 @@ entity_write_req(const struct entity *ent)
  * repo, then flush those into the parser process.
  */
 void
-entityq_flush(struct entityq *q)
+entityq_flush(struct entityq *q, struct repo *rp)
 {
 	struct entity	*p, *np;
 
 	TAILQ_FOREACH_SAFE(p, q, entries, np) {
+		/*
+		 * XXX fixup path here since the repo may change
+		 * during load because of fallback. In that case
+		 * the file path changes as well since RRDP and RSYNC
+		 * can not share a common repo.
+		 */
+		char *file = p->file;
+		p->file = repo_filename(rp, file);
+		if (p->file == NULL)
+			err(1, "can't construct repo filename");
+		free(file);
+
 		entity_write_req(p);
 		TAILQ_REMOVE(q, p, entries);
 		entity_free(p);
@@ -153,11 +170,6 @@ entityq_add(char *file, enum rtype type, struct repo *rp,
     const unsigned char *pkey, size_t pkeysz, char *descr)
 {
 	struct entity	*p;
-
-	if (filepath_add(&fpt, file) == 0) {
-		warnx("%s: File already visited", file);
-		return;
-	}
 
 	if ((p = calloc(1, sizeof(struct entity))) == NULL)
 		err(1, NULL);
@@ -183,6 +195,20 @@ entityq_add(char *file, enum rtype type, struct repo *rp,
 	 */
 
 	if (rp == NULL || !repo_queued(rp, p)) {
+		/*
+		 * XXX fixup path here since for repo path the
+		 * file path has not yet been fixed here.
+		 * This is a quick way to make this work but in
+		 * the long run repos need to be passed to the parser.
+		 */
+		if (rp != NULL) {
+			file = p->file;
+			p->file = repo_filename(rp, file);
+			if (p->file == NULL)
+				err(1, "can't construct repo filename from %s",
+				    file);
+			free(file);
+		}
 		entity_write_req(p);
 		entity_free(p);
 	}
@@ -396,16 +422,14 @@ queue_add_tal(const char *file)
 static void
 queue_add_from_tal(struct tal *tal)
 {
-	char		*nfile;
 	struct repo	*repo;
 
 	assert(tal->urisz);
 
 	/* Look up the repository. */
 	repo = ta_lookup(tal);
-	nfile = repo_filename(repo, NULL);
 
-	entityq_add(nfile, RTYPE_CER, repo, tal->pkey,
+	entityq_add(NULL, RTYPE_CER, repo, tal->pkey,
 	    tal->pkeysz, tal->descr);
 }
 
@@ -424,10 +448,8 @@ queue_add_from_cert(const struct cert *cert)
 		return;
 	}
 
-	nfile = repo_filename(repo, cert->mft);
-	if (nfile == NULL)
-		return;
-
+	if ((nfile = strdup(cert->mft)) == NULL)
+		err(1, NULL);
 	entityq_add(nfile, RTYPE_MFT, repo, NULL, 0, NULL);
 }
 
