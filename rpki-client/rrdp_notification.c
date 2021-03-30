@@ -71,8 +71,6 @@ add_delta(struct notification_xml *nxml, const char *uri,
 	if ((d = calloc(1, sizeof(struct delta_item))) == NULL)
 		err(1, "%s - calloc", __func__);
 
-	warnx("add delta %lld -> %s", serial, uri);
-
 	d->serial = serial;
 	d->uri = xstrdup(uri);
 	memcpy(d->hash, hash, sizeof(d->hash));
@@ -380,6 +378,7 @@ notification_done(struct notification_xml *nxml, char *last_mod)
 
 	/* update via delta possible */
 	nxml->current->serial = nxml->repository->serial;
+	nxml->repository->serial = nxml->serial;
 	return DELTA;
 
 snapshot:

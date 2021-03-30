@@ -333,17 +333,21 @@ rrdp_finished(struct rrdp *s)
 			case NOTIFICATION:
 				warnx("%s: repository not modified",
 				    s->local);
-
 				rrdp_state_send(s);
 				rrdp_free(s);
 				rrdp_done(id, 1);
 				break;
 			case SNAPSHOT:
+				warnx("%s: downloading snapshot",
+				    s->local);
 				s->sxml = new_snapshot_xml(s->parser,
 				    &s->current, s);
 				s->state = RRDP_STATE_REQ;
 				break;
 			case DELTA:
+				warnx("%s: downloading %lld deltas",
+				    s->local, s->repository.serial -
+				    s->current.serial);
 				s->dxml = new_delta_xml(s->parser,
 				    &s->current, s);
 				s->state = RRDP_STATE_REQ;
@@ -475,7 +479,6 @@ proc_rrdp(int fd)
 		TAILQ_FOREACH(s, &states, entry) {
 			if (i >= MAX_SESSIONS + 1) {
 				/* not enough sessions, wait for better times */
-warnx("NOT ENOUGH SESSIONS");
 				s->pfd = NULL;
 				continue;
 			}
