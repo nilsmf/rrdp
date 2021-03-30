@@ -444,7 +444,7 @@ rsync_get(const char *uri)
 		logx("%s: using cache", rr->basedir);
 		/* there is nothing in the queue so no need to flush */
 	} else {
-		logx("%s[%zu]: pulling from %s", rr->basedir, rr->id, rr->repouri);
+		logx("%s: pulling from %s", rr->basedir, rr->repouri);
 		rsync_fetch(rr->id, rr->repouri, rr->basedir);
 	}
 
@@ -511,7 +511,7 @@ rrdp_get(const char *uri)
 		logx("%s: using cache", rr->notifyuri);
 		/* there is nothing in the queue so no need to flush */
 	} else {
-		logx("%s[%zu]: pulling from %s", rr->notifyuri, rr->id, "network");
+		logx("%s: pulling from %s", rr->notifyuri, "network");
 		rrdprepo_fetch(rr);
 	}
 
