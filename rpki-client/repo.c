@@ -166,11 +166,9 @@ filepath_dir_exists(struct filepath_tree *tree, char *path)
 	struct filepath *res;
 
 	needle.file = path;
-
 	res = RB_NFIND(filepath_tree, tree, &needle);
 	if (res != NULL && strstr(res->file, path) == res->file)
-			return 1;
-
+		return 1;
 	return 0;
 }
 
