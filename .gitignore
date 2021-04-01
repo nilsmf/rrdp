@@ -3,3 +3,4 @@ rrdp
 test
 *.swp
 src/obj
+rpki-client/obj
