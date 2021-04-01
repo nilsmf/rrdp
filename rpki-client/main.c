@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.126 2021/03/29 03:45:35 deraadt Exp $ */
+/*	$OpenBSD: main.c,v 1.128 2021/04/01 06:53:49 claudio Exp $ */
 /*
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
  *
@@ -729,6 +729,7 @@ main(int argc, char *argv[])
 	if (procpid == 0) {
 		close(fd[1]);
 
+		setproctitle("parser");
 		/* change working directory to the cache directory */
 		if (fchdir(cachefd) == -1)
 			err(1, "fchdir");
@@ -762,6 +763,7 @@ main(int argc, char *argv[])
 			close(proc);
 			close(fd[1]);
 
+			setproctitle("rsync");
 			/* change working directory to the cache directory */
 			if (fchdir(cachefd) == -1)
 				err(1, "fchdir");
@@ -797,6 +799,7 @@ main(int argc, char *argv[])
 			close(rsync);
 			close(fd[1]);
 
+			setproctitle("http");
 			/* change working directory to the cache directory */
 			if (fchdir(cachefd) == -1)
 				err(1, "fchdir");
@@ -1067,8 +1070,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (!noop)
-		repo_cleanup(&fpt);
+	repo_cleanup(&fpt);
 
 	gettimeofday(&now_time, NULL);
 	timersub(&now_time, &start_time, &stats.elapsed_time);
@@ -1099,7 +1101,7 @@ main(int argc, char *argv[])
 	logx("Certificate revocation lists: %zu", stats.crls);
 	logx("Ghostbuster records: %zu", stats.gbrs);
 	logx("Repositories: %zu", stats.repos);
-	logx("Removed: %zu files, %zu directories",
+	logx("Cleanup: removed %zu files, %zu directories",
 	    stats.del_files, stats.del_dirs);
 	logx("VRP Entries: %zu (%zu unique)", stats.vrps, stats.uniqs);
 

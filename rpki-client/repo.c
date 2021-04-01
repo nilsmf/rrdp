@@ -159,6 +159,9 @@ filepath_exists(struct filepath_tree *tree, char *file)
 	return filepath_find(tree, file) != NULL;
 }
 
+/*
+ * Return true if a filepath entry exists that starts with path.
+ */
 static int
 filepath_dir_exists(struct filepath_tree *tree, char *path)
 {
@@ -167,8 +170,12 @@ filepath_dir_exists(struct filepath_tree *tree, char *path)
 
 	needle.file = path;
 	res = RB_NFIND(filepath_tree, tree, &needle);
-	if (res != NULL && strstr(res->file, path) == res->file)
-		return 1;
+	while (res != NULL && strstr(res->file, path) == res->file) {
+		/* make sure that filepath acctually is in that path */
+		if (res->file[strlen(path)] == '/')
+			return 1;
+		res = RB_NEXT(filepath_tree, tree, res);
+	}
 	return 0;
 }
 
@@ -1120,9 +1127,8 @@ add_to_del(char **del, size_t *dsz, char *file)
 	*dsz = i + 1;
 	return del;
 }
-
 void
-repo_cleanup(struct filepath_tree *fpt)
+repo_cleanup(struct filepath_tree *tree)
 {
 	size_t i, delsz = 0, dirsz = 0;
 	char **del = NULL, **dir = NULL;
@@ -1140,7 +1146,7 @@ repo_cleanup(struct filepath_tree *fpt)
 	while ((e = fts_read(fts)) != NULL) {
 		switch (e->fts_info) {
 		case FTS_NSOK:
-			if (!filepath_exists(fpt, e->fts_path))
+			if (!filepath_exists(tree, e->fts_path))
 				del = add_to_del(del, &delsz,
 				    e->fts_path);
 			break;
@@ -1151,7 +1157,7 @@ repo_cleanup(struct filepath_tree *fpt)
 					err(1, "fts_set");
 			break;
 		case FTS_DP:
-			if (!filepath_dir_exists(fpt, e->fts_path))
+			if (!filepath_dir_exists(tree, e->fts_path))
 				dir = add_to_del(dir, &dirsz,
 				    e->fts_path);
 			break;
@@ -1159,7 +1165,7 @@ repo_cleanup(struct filepath_tree *fpt)
 		case FTS_SLNONE:
 			warnx("symlink %s", e->fts_path);
 			del = add_to_del(del, &delsz, e->fts_path);
-		break;
+			break;
 		case FTS_NS:
 		case FTS_ERR:
 			if (e->fts_errno == ENOENT &&
