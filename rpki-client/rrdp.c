@@ -458,11 +458,58 @@ rrdp_input_handler(int fd)
 	}
 }
 
+static void
+rrdp_data_handler(struct rrdp *s)
+{
+	char buf[READ_BUF_SIZE];
+	XML_Parser p = s->parser;
+	ssize_t len;
+
+	len = read(s->infd, buf, sizeof(buf));
+	if (len == -1) {
+		s->state |= RRDP_STATE_PARSE_ERROR;
+		warn("%s: read failure", s->local);
+		return;
+	}
+	if ((s->state & RRDP_STATE_PARSE) == 0)
+		errx(1, "%s: bad parser state", s->local);
+	if (len == 0) {
+		/* parser stage finished */
+		close(s->infd);
+		s->infd = -1;
+
+		if (s->task != NOTIFICATION) {
+			char h[SHA256_DIGEST_LENGTH];
+
+			SHA256_Final(h, &s->ctx);
+			if (memcmp(s->hash, h, sizeof(s->hash)) != 0) {
+				s->state |= RRDP_STATE_PARSE_ERROR;
+				warnx("%s: bad message digest", s->local);
+				return;
+			}
+		}
+
+		s->state |= RRDP_STATE_PARSE_DONE;
+		rrdp_finished(s);
+		return;
+	}
+
+	/* parse and maybe hash the bytes just read */
+	if (s->task != NOTIFICATION)
+		SHA256_Update(&s->ctx, buf, len);
+	if ((s->state & RRDP_STATE_PARSE_ERROR) == 0 &&
+	    XML_Parse(p, buf, len, 0) != XML_STATUS_OK) {
+		s->state |= RRDP_STATE_PARSE_ERROR;
+		warnx("%s: parse error at line %lu: %s", s->local,
+		    XML_GetCurrentLineNumber(p),
+		    XML_ErrorString(XML_GetErrorCode(p)));
+	}
+}
+
 void
 proc_rrdp(int fd)
 {
 	struct pollfd pfds[MAX_SESSIONS + 1];
-	char buf[READ_BUF_SIZE];
 	struct rrdp *s, *ns;
 	size_t i;
 
@@ -536,57 +583,8 @@ proc_rrdp(int fd)
 		TAILQ_FOREACH_SAFE(s, &states, entry, ns) {
 			if (s->pfd == NULL)
 				continue;
-			if (s->pfd->revents & POLLIN) {
-				XML_Parser p = s->parser;
-				ssize_t len;
-
-				len = read(s->infd, buf, sizeof(buf));
-				if (len == -1) {
-					s->state |= RRDP_STATE_PARSE_ERROR;
-					warn("%s: read failure", s->local);
-					continue;
-				}
-				if ((s->state & RRDP_STATE_PARSE) == 0)
-					errx(1, "%s: bad parser state",
-					    s->local);
-				if (len == 0) {
-					/* parser stage finished */
-					close(s->infd);
-					s->infd = -1;
-
-					if (s->task != NOTIFICATION) {
-						char h[SHA256_DIGEST_LENGTH];
-
-						SHA256_Final(h, &s->ctx);
-						if (memcmp(s->hash, h,
-						    sizeof(s->hash)) != 0) {
-							s->state |=
-							    RRDP_STATE_PARSE_ERROR;
-							warnx("%s: bad message "
-							   "digest",
-							   s->local);
-							continue;
-						}
-					}
-
-					s->state |= RRDP_STATE_PARSE_DONE;
-					rrdp_finished(s);
-					continue;
-				}
-				/* parse and maybe hash the bytes just read */
-				if (s->task != NOTIFICATION)
-					SHA256_Update(&s->ctx, buf, len);
-				if ((s->state & RRDP_STATE_PARSE_ERROR) == 0 &&
-				    XML_Parse(p, buf, len, 0) !=
-				    XML_STATUS_OK) {
-					s->state |= RRDP_STATE_PARSE_ERROR;
-					warnx("%s: parse error at line %lu: %s",
-					    s->local,
-					    XML_GetCurrentLineNumber(p),
-					    XML_ErrorString(XML_GetErrorCode(p))
-					    );
-				}
-			}
+			if (s->pfd->revents & POLLIN)
+				rrdp_data_handler(s);
 		}
 	}
 
